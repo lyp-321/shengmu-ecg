@@ -297,13 +297,14 @@ def main():
     """主函数"""
     # ========== 配置：跳过已训练的模型 ==========
     # 设置为 True 的模型将被跳过
+    # 全部设置为 False，重新训练所有模型
     skip_models = {
-        'ResNet1D': True,      # 已训练完成
-        'SEResNet1D': True,    # 已训练完成
-        'Transformer': True,   # CPU太慢，暂时跳过
-        'BiLSTM': False,
-        'TCN': False,
-        'Inception': False
+        'ResNet1D': False,      # 重新训练
+        'SEResNet1D': False,    # 重新训练
+        'Transformer': False,   # 重新训练（包括Transformer）
+        'BiLSTM': False,        # 重新训练
+        'TCN': False,           # 重新训练
+        'Inception': False      # 重新训练
     }
     # ==========================================
     
