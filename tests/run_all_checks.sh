@@ -42,11 +42,11 @@ run_check() {
 echo "开始后端检查（第1-5层）..."
 echo ""
 
-run_check 1 "check_layer1_database.py" "数据库层"
-run_check 2 "check_layer2_models.py" "数据模型层"
-run_check 3 "check_layer3_algorithms.py" "算法层"
-run_check 4 "check_layer4_services.py" "服务层"
-run_check 5 "check_layer5_api.py" "API层"
+run_check 1 "tests/check_layer1_database.py" "数据库层"
+run_check 2 "tests/check_layer2_models.py" "数据模型层"
+run_check 3 "tests/check_layer3_algorithms.py" "算法层"
+run_check 4 "tests/check_layer4_services.py" "服务层"
+run_check 5 "tests/check_layer5_api.py" "API层"
 
 echo ""
 echo "=========================================="
@@ -71,8 +71,8 @@ if curl -s http://localhost:8000/ > /dev/null 2>&1; then
     echo "开始前端和集成测试（第6-7层）..."
     echo ""
     
-    run_check 6 "check_layer6_frontend.py" "前端层"
-    run_check 7 "check_layer7_integration.py" "集成测试"
+    run_check 6 "tests/check_layer6_frontend.py" "前端层"
+    run_check 7 "tests/check_layer7_integration.py" "集成测试"
     
 else
     echo -e "${YELLOW}⚠️  服务器未运行${NC}"
@@ -81,8 +81,8 @@ else
     echo "  uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
     echo ""
     echo "然后运行前端和集成测试："
-    echo "  python check_layer6_frontend.py"
-    echo "  python check_layer7_integration.py"
+    echo "  python tests/check_layer6_frontend.py"
+    echo "  python tests/check_layer7_integration.py"
     echo ""
 fi
 

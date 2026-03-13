@@ -30,14 +30,21 @@ ecg-system/
 │   │   ├── multimodal_fusion.py  # 多模态融合引擎
 │   │   ├── deep_models.py        # 深度学习模型（ResNet/Transformer等）
 │   │   ├── graph_models.py       # 图神经网络（GCN/GAT）
+│   │   ├── grad_cam.py           # Grad-CAM可解释性
 │   │   ├── federated_learning.py # 联邦学习框架
 │   │   └── models/               # 预训练模型文件
 │   │       ├── rf_model.pkl
+│   │       ├── randomforest_model.pkl
 │   │       ├── xgboost_model.pkl
 │   │       ├── lightgbm_model.pkl
 │   │       ├── catboost_model.pkl
 │   │       ├── svm_model.pkl
-│   │       └── scaler.pkl
+│   │       ├── scaler.pkl
+│   │       ├── resnet1d_best.pth
+│   │       ├── seresnet1d_best.pth
+│   │       ├── bilstm_best.pth
+│   │       ├── tcn_best.pth
+│   │       └── inception_best.pth
 │   │
 │   ├── models/                   # 数据库模型
 │   │   ├── __init__.py
@@ -55,7 +62,8 @@ ecg-system/
 │   │   ├── deps.py               # 依赖注入
 │   │   ├── logger.py             # 日志系统
 │   │   ├── exceptions.py         # 异常处理
-│   │   └── validators.py         # 文件验证
+│   │   ├── validators.py         # 文件验证
+│   │   └── risk_warning.py       # 误诊风险预警
 │   │
 │   └── db/                       # 数据库配置
 │       ├── __init__.py
@@ -78,6 +86,11 @@ ecg-system/
 │   ├── train_multimodal_models.py # 训练深度学习模型
 │   ├── train_interactive.py      # 交互式训练界面
 │   ├── train_all.sh              # 一键训练脚本
+│   ├── visualize_results.py      # 可视化结果
+│   ├── test_risk_warning.py      # 误诊风险预警测试
+│   ├── test_noise_robustness.py  # 抗干扰能力测试
+│   ├── ablation_study.py         # 消融实验
+│   ├── test_grad_cam.py          # Grad-CAM测试
 │   └── TRAINING_GUIDE.md         # 训练指南
 │
 ├── data/                         # 数据目录
@@ -94,13 +107,31 @@ ecg-system/
 │
 ├── tests/                        # 测试代码
 │   ├── __init__.py
-│   └── test_algorithms.py        # 算法测试
+│   ├── test_algorithms.py        # 算法测试
+│   ├── quick_test.py             # 快速测试
+│   ├── check_layer1_database.py  # 第1层：数据库层检查
+│   ├── check_layer2_models.py    # 第2层：数据模型层检查
+│   ├── check_layer3_algorithms.py # 第3层：算法层检查
+│   ├── check_layer4_services.py  # 第4层：服务层检查
+│   ├── check_layer5_api.py       # 第5层：API层检查
+│   ├── check_layer6_frontend.py  # 第6层：前端层检查
+│   ├── check_layer7_integration.py # 第7层：集成测试
+│   └── run_all_checks.sh         # 一键运行所有检查
 │
 ├── experiments/                  # 实验对比
 │   ├── compare_methods.py        # 方法对比脚本
 │   └── results/                  # 实验结果
 │       ├── method_comparison.png
+│       ├── confusion_matrices.png
+│       ├── model_comparison.png
+│       ├── f1_per_class.png
+│       ├── training_time.png
+│       ├── snr_accuracy_curve.png
+│       ├── noise_types_comparison.png
+│       ├── ablation_*.png
 │       ├── ml_results.txt
+│       ├── ml_results_patient_wise.json
+│       ├── noise_robustness_results.json
 │       └── summary.md
 │
 ├── logs/                         # 日志文件
@@ -121,8 +152,7 @@ ecg-system/
 ├── requirements.txt              # Python依赖
 ├── ecg_system.db                 # SQLite数据库
 ├── README.md                     # 项目说明
-├── ECG系统完整说明书.md          # 完整系统说明
-├── 大创申请书_最终版.md          # 大创申请书
+├── IMPROVEMENTS.md               # 改进说明
 └── PROJECT_STRUCTURE.md          # 本文件
 ```
 
@@ -154,6 +184,11 @@ ecg-system/
 | `scripts/init_admin.py` | 初始化管理员 | 首次部署 |
 | `scripts/train_traditional_ml.py` | 训练ML模型 | 模型训练 |
 | `scripts/train_multimodal_models.py` | 训练DL模型 | 模型训练 |
+| `scripts/visualize_results.py` | 可视化结果 | 实验分析 |
+| `scripts/test_risk_warning.py` | 风险预警测试 | 功能测试 |
+| `scripts/test_noise_robustness.py` | 抗干扰测试 | 性能评估 |
+| `scripts/ablation_study.py` | 消融实验 | 模型对比 |
+| `scripts/test_grad_cam.py` | Grad-CAM测试 | 可解释性 |
 | `scripts/generate_test_data.py` | 生成测试数据 | 开发测试 |
 
 ### 文档
@@ -161,8 +196,8 @@ ecg-system/
 | 文件 | 说明 |
 |------|------|
 | `README.md` | 项目说明、快速开始 |
-| `ECG系统完整说明书.md` | 完整系统文档 |
-| `大创申请书_最终版.md` | 大创申请材料 |
+| `IMPROVEMENTS.md` | 改进说明文档 |
+| `PROJECT_STRUCTURE.md` | 项目结构说明（本文件） |
 | `app/algorithms/README.md` | 算法详细说明 |
 | `scripts/TRAINING_GUIDE.md` | 模型训练指南 |
 

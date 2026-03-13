@@ -308,6 +308,11 @@ ecg-system/
 │   ├── train_traditional_ml.py   # 训练ML模型 ⭐
 │   ├── train_multimodal_models.py # 训练DL模型 ⭐
 │   ├── train_interactive.py      # 交互式训练
+│   ├── visualize_results.py      # 可视化结果 ⭐
+│   ├── test_risk_warning.py      # 误诊预警测试 ⭐
+│   ├── test_noise_robustness.py  # 抗干扰测试 ⭐
+│   ├── ablation_study.py         # 消融实验 ⭐
+│   ├── test_grad_cam.py          # Grad-CAM测试
 │   ├── generate_test_data.py     # 生成测试数据
 │   └── TRAINING_GUIDE.md         # 训练指南
 │
@@ -320,6 +325,28 @@ ecg-system/
 │   ├── bradycardia_ecg.csv
 │   └── tachycardia_ecg.csv
 │
+├── tests/                        # 系统检查脚本 ⭐
+│   ├── check_layer1_database.py
+│   ├── check_layer2_models.py
+│   ├── check_layer3_algorithms.py
+│   ├── check_layer4_services.py
+│   ├── check_layer5_api.py
+│   ├── check_layer6_frontend.py
+│   ├── check_layer7_integration.py
+│   ├── run_all_checks.sh         # 一键运行所有检查
+│   └── quick_test.py
+│
+├── experiments/                  # 实验结果 ⭐
+│   └── results/
+│       ├── confusion_matrices.png
+│       ├── model_comparison.png
+│       ├── f1_per_class.png
+│       ├── training_time.png
+│       ├── snr_accuracy_curve.png
+│       ├── noise_types_comparison.png
+│       ├── ablation_*.png
+│       └── *.json                # 结果数据
+│
 ├── logs/                         # 日志文件
 │   ├── server.log
 │   └── error.log
@@ -327,6 +354,7 @@ ecg-system/
 ├── ecg_system.db                 # SQLite数据库
 ├── requirements.txt              # Python依赖
 ├── .env.example                  # 环境变量模板
+├── IMPROVEMENTS.md               # 改进说明 ⭐
 └── README.md                     # 本文件
 ```
 
@@ -402,7 +430,7 @@ curl http://localhost:8000/api/ecg/tasks/1 \
 ### 训练传统ML模型
 
 ```bash
-# 使用MIT-BIH数据集训练
+# 使用MIT-BIH数据集训练（30000样本，15个患者）
 python scripts/train_traditional_ml.py
 
 # 训练完成后会生成5个模型文件：
@@ -416,19 +444,85 @@ python scripts/train_traditional_ml.py
 ### 训练深度学习模型
 
 ```bash
-# 训练所有深度学习模型（约1-2小时，CPU）
+# 训练所有深度学习模型（约2-3小时，CPU）
 python scripts/train_multimodal_models.py
 
-# 跳过已训练的模型（修改脚本中的skip_models配置）
-# 训练完成后会生成5个模型文件：
+# 训练完成后会生成6个模型文件：
 # - resnet1d_best.pth
 # - seresnet1d_best.pth
 # - bilstm_best.pth
 # - tcn_best.pth
 # - inception_best.pth
+# - transformer_best.pth
 ```
 
 详细训练指南：[scripts/TRAINING_GUIDE.md](scripts/TRAINING_GUIDE.md)
+
+---
+
+## 🧪 实验与测试
+
+### 可视化结果
+
+```bash
+# 生成混淆矩阵、模型对比图等
+python scripts/visualize_results.py
+```
+
+生成的图表：
+- `confusion_matrices.png` - 5个ML模型的混淆矩阵
+- `model_comparison.png` - 模型性能对比
+- `f1_per_class.png` - 各类别F1-Score对比
+- `training_time.png` - 训练时间对比
+
+### 误诊风险预警测试
+
+```bash
+# 测试误诊风险预警机制（6个测试案例）
+python scripts/test_risk_warning.py
+```
+
+预警级别：
+- 安全：无需预警，可直接使用
+- 低风险：建议关注
+- 中风险：需要人工复核
+- 高风险：强烈建议人工复核
+- 严重风险：必须人工复核
+
+### 抗干扰能力测试
+
+```bash
+# 测试模型在不同噪声下的性能
+python scripts/test_noise_robustness.py
+```
+
+测试内容：
+- 高斯白噪声（6个不同SNR）
+- 工频干扰（50Hz）
+- 基线漂移
+- 肌电干扰（EMG）
+- 混合噪声
+
+生成图表：
+- `snr_accuracy_curve.png` - SNR-准确率曲线
+- `noise_types_comparison.png` - 噪声类型对比
+
+### 消融实验
+
+```bash
+# 对比单一模型 vs 集成模型
+python scripts/ablation_study.py
+```
+
+实验内容：
+- 单个模型性能评估
+- 不同集成方法对比（投票法、平均法、加权平均）
+- 增量实验（逐步添加模型的效果）
+
+生成图表：
+- `ablation_single_vs_ensemble.png` - 单个vs集成对比
+- `ablation_incremental.png` - 增量实验曲线
+- `ablation_improvement.png` - 性能提升图
 
 ---
 
@@ -467,44 +561,32 @@ python scripts/init_admin.py
 
 ## 📊 系统检查
 
-项目提供了7层系统检查脚本：
+项目提供了7层系统检查脚本（位于 `tests/` 目录）：
 
 ```bash
-# 第1层：数据库层
-python check_layer1_database.py
+# 一键运行所有检查
+bash tests/run_all_checks.sh
 
-# 第2层：数据模型层
-python check_layer2_models.py
-
-# 第3层：算法层
-python check_layer3_algorithms.py
-
-# 第4层：服务层
-python check_layer4_services.py
-
-# 第5层：API层
-python check_layer5_api.py
-
-# 第6层：前端层
-python check_layer6_frontend.py
-
-# 第7层：集成测试
-python check_layer7_integration.py
-
-# 或者一键运行所有检查
-bash run_all_checks.sh
+# 或单独运行各层检查
+python tests/check_layer1_database.py    # 第1层：数据库层
+python tests/check_layer2_models.py      # 第2层：数据模型层
+python tests/check_layer3_algorithms.py  # 第3层：算法层
+python tests/check_layer4_services.py    # 第4层：服务层
+python tests/check_layer5_api.py         # 第5层：API层
+python tests/check_layer6_frontend.py    # 第6层：前端层（需要启动服务器）
+python tests/check_layer7_integration.py # 第7层：集成测试（需要启动服务器）
 ```
+
+**注意**：第6-7层检查需要先启动服务器。
 
 ---
 
 ## 📚 文档
 
 - [项目结构说明](PROJECT_STRUCTURE.md)
-- [系统检查计划](SYSTEM_CHECK_PLAN.md)
+- [改进说明](IMPROVEMENTS.md)
 - [算法模块说明](app/algorithms/README.md)
 - [训练指南](scripts/TRAINING_GUIDE.md)
-- [完整系统说明书](ECG系统完整说明书.md)
-- [大创申请书](大创申请书_最终版.md)
 
 ---
 

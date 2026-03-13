@@ -119,14 +119,15 @@ def load_and_extract_features(data_dir='data', num_samples=5000):
     加载MIT-BIH数据并提取特征（按患者划分，避免数据泄露）
     
     Args:
-        data_dir: 数据目录
+        data_dir: 数据目
         num_samples: 样本数量
     
     Returns:
         X: 特征矩阵
         y: 标签
         record_ids: 患者ID列表（用于按患者划分）
-        feature_names: 特征名称
+        feature_names:
+        第3步：误诊风险预警机制 特征名称
     """
     print("加载MIT-BIH数据并提取特征...")
     print("⚠️  使用按患者划分（Patient-wise）策略，避免数据泄露")
