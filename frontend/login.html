@@ -4,17 +4,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登录 - ECG AI Pulse</title>
+    <title>登录 | AI Pulse Pro</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #6366f1;
-            --primary-light: #818cf8;
             --secondary: #a855f7;
-            --accent: #f43f5e;
-            --bg-dark: #0f172a;
-            --glass-bg: rgba(255, 255, 255, 0.05);
-            --glass-border: rgba(255, 255, 255, 0.1);
+            --bg-dark: #020617;
+            --card-bg: rgba(15, 23, 42, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.08);
             --text-main: #f8fafc;
             --text-dim: #94a3b8;
         }
@@ -29,79 +27,78 @@
         body {
             background-color: var(--bg-dark);
             background-image:
-                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-                radial-gradient(at 100% 0%, rgba(168, 85, 247, 0.15) 0px, transparent 50%);
+                radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 100% 100%, rgba(168, 85, 247, 0.15) 0%, transparent 50%);
             color: var(--text-main);
-            min-height: 100vh;
+            height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            overflow: hidden;
         }
 
-        .login-container {
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
+        .login-card {
+            width: 100%;
+            max-width: 420px;
+            background: var(--card-bg);
+            backdrop-filter: blur(30px);
             border: 1px solid var(--glass-border);
             border-radius: 32px;
             padding: 50px;
-            width: 100%;
-            max-width: 450px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            animation: slideUp 0.6s ease-out;
+            position: relative;
         }
 
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .logo {
+        .logo-area {
             text-align: center;
             margin-bottom: 40px;
         }
 
-        .logo h1 {
-            font-size: 3rem;
-            margin-bottom: 10px;
-            background: linear-gradient(to right, var(--primary-light), var(--secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        .logo-icon {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
         }
 
-        .logo p {
+        h2 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            margin-bottom: 8px;
+        }
+
+        p.subtitle {
             color: var(--text-dim);
-            font-size: 1.1rem;
-            font-weight: 300;
+            font-size: 0.9rem;
+            margin-bottom: 30px;
         }
 
         .form-group {
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
 
         label {
             display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
             color: var(--text-dim);
-            font-weight: 500;
-            margin-bottom: 10px;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            margin-bottom: 8px;
+            margin-left: 4px;
         }
 
         input {
             width: 100%;
-            padding: 15px 20px;
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--glass-border);
-            border-radius: 16px;
+            border-radius: 14px;
+            padding: 14px 18px;
             color: white;
             font-size: 1rem;
             transition: all 0.3s;
@@ -110,148 +107,91 @@
         input:focus {
             outline: none;
             border-color: var(--primary);
-            background: rgba(255, 255, 255, 0.07);
+            background: rgba(255, 255, 255, 0.06);
             box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
         }
 
-        .btn {
+        .btn-login {
             width: 100%;
-            padding: 16px;
             background: linear-gradient(135deg, var(--primary), var(--secondary));
             color: white;
             border: none;
-            border-radius: 16px;
-            font-size: 1.1rem;
-            font-weight: 600;
+            border-radius: 14px;
+            padding: 14px;
+            font-size: 1rem;
+            font-weight: 700;
             cursor: pointer;
             transition: all 0.3s;
             margin-top: 10px;
             box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
         }
 
-        .btn:hover {
+        .btn-login:hover {
             transform: translateY(-2px);
             box-shadow: 0 15px 30px rgba(99, 102, 241, 0.4);
         }
 
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        .links {
+        .footer-links {
             text-align: center;
             margin-top: 30px;
+            font-size: 0.9rem;
             color: var(--text-dim);
-            font-size: 0.95rem;
         }
 
-        .links a {
-            color: var(--primary-light);
+        .footer-links a {
+            color: var(--primary);
             text-decoration: none;
             font-weight: 600;
-            transition: color 0.3s;
-        }
-
-        .links a:hover {
-            color: var(--secondary);
-        }
-
-        .error {
-            background: rgba(244, 63, 94, 0.1);
-            color: var(--accent);
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 25px;
-            display: none;
-            font-size: 0.9rem;
-            border: 1px solid rgba(244, 63, 94, 0.2);
-        }
-
-        .success {
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--success);
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 25px;
-            display: none;
-            font-size: 0.9rem;
-            border: 1px solid rgba(16, 185, 129, 0.2);
         }
     </style>
 </head>
 
 <body>
-    <div class="login-container">
-        <div class="logo">
-            <h1>🫀</h1>
-            <p>ECG AI Pulse</p>
+    <div class="login-card">
+        <div class="logo-area">
+            <div class="logo-icon">🫀</div>
+            <h2>欢迎回来</h2>
+            <p class="subtitle">登录您的 AI Pulse Pro 终端</p>
         </div>
-
-        <div class="error" id="error"></div>
-        <div class="success" id="success"></div>
-
         <form id="loginForm">
             <div class="form-group">
-                <label for="username">用户名</label>
-                <input type="text" id="username" name="username" required autocomplete="username" placeholder="输入您的用户名">
+                <label>用户名</label>
+                <input type="text" id="username" placeholder="输入您的用户名" required>
             </div>
-
             <div class="form-group">
-                <label for="password">密码</label>
-                <input type="password" id="password" name="password" required autocomplete="current-password"
-                    placeholder="••••••••">
+                <label>密码</label>
+                <input type="password" id="password" placeholder="••••••••" required>
             </div>
-
-            <button type="submit" class="btn" id="loginBtn">进入仪表盘</button>
+            <button type="submit" class="btn-login">立即登录</button>
         </form>
-
-        <div class="links">
-            还没有账号？<a href="/register.html">立即加入</a>
+        <div class="footer-links">
+            还没有账号？ <a href="/register.html">立即注册</a>
         </div>
     </div>
 
     <script>
-        const loginForm = document.getElementById('loginForm');
-        const loginBtn = document.getElementById('loginBtn');
-        const errorDiv = document.getElementById('error');
-        const successDiv = document.getElementById('success');
-
-        loginForm.addEventListener('submit', async (e) => {
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-
-            errorDiv.style.display = 'none';
-            successDiv.style.display = 'none';
-            loginBtn.disabled = true;
-            loginBtn.textContent = '验证中...';
 
             try {
                 const response = await fetch('/api/auth/login', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
                 });
 
-                const data = await response.json();
-
                 if (response.ok) {
+                    const data = await response.json();
                     localStorage.setItem('access_token', data.access_token);
-                    successDiv.textContent = '验证通过！正在进入仪表盘...';
-                    successDiv.style.display = 'block';
-                    setTimeout(() => { window.location.href = '/'; }, 1000);
+                    window.location.href = '/';
                 } else {
-                    errorDiv.textContent = data.detail || '用户名或密码错误';
-                    errorDiv.style.display = 'block';
+                    const error = await response.json();
+                    alert(error.detail || '登录失败');
                 }
-            } catch (error) {
-                errorDiv.textContent = '无法连接到服务器，请检查网络';
-                errorDiv.style.display = 'block';
-            } finally {
-                loginBtn.disabled = false;
-                loginBtn.textContent = '进入仪表盘';
+            } catch (err) {
+                alert('网络错误，请稍后再试');
             }
         });
     </script>

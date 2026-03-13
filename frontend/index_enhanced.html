@@ -1,0 +1,426 @@
+<!-- 
+ECG 系统前端优化补丁
+在原有 index.html 的 <script> 标签末尾添加以下代码
+-->
+
+<script>
+// ==================== 优化1: 增强日志自动刷新机制 ====================
+
+let logRefreshInterval = null;
+let isAutoRefreshEnabled = true;
+
+// 启动自动刷新（每30秒）
+function startAutoRefresh() {
+    if (logRefreshInterval) clearInterval(logRefreshInterval);
+    
+    logRefreshInterval = setInterval(() => {
+        if (isAutoRefreshEnabled) {
+            console.log('[Auto Refresh] 自动刷新日志...');
+            loadHistoryLogs(false); // 静默刷新，不显示提示
+        }
+    }, 30000); // 30秒
+}
+
+// 停止自动刷新
+function stopAutoRefresh() {
+    if (logRefreshInterval) {
+        clearInterval(logRefreshInterval);
+        logRefreshInterval = null;
+    }
+}
+
+// 切换自动刷新
+function toggleAutoRefresh() {
+    isAutoRefreshEnabled = !isAutoRefreshEnabled;
+    const btn = document.getElementById('btnToggleAutoRefresh');
+    if (btn) {
+        btn.textContent = isAutoRefreshEnabled ? '🔄 自动刷新: 开' : '⏸️ 自动刷新: 关';
+        btn.style.background = isAutoRefreshEnabled ? 'rgba(16, 185, 129, 0.2)' : 'rgba(148, 163, 184, 0.2)';
+    }
+    showToast(isAutoRefreshEnabled ? '已开启自动刷新' : '已关闭自动刷新', 'success');
+}
+
+// ==================== 优化2: 增强错误处理 ====================
+
+// 全局错误捕获
+window.addEventListener('error', (event) => {
+    console.error('[Global Error]', event.error);
+    showToast('系统错误，请刷新页面', 'error');
+});
+
+// 网络状态监测
+window.addEventListener('online', () => {
+    showToast('网络已恢复', 'success');
+    loadHistoryLogs(true);
+});
+
+window.addEventListener('offline', () => {
+    showToast('网络已断开，部分功能不可用', 'error');
+    stopAutoRefresh();
+});
+
+// ==================== 优化3: 加载状态提示 ====================
+
+function showLoadingSkeleton(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px;">
+            ${Array(6).fill(0).map(() => `
+                <div class="log-item" style="animation: pulse 1.5s infinite;">
+                    <div style="height: 20px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-bottom: 8px;"></div>
+                    <div style="height: 16px; background: rgba(255,255,255,0.03); border-radius: 4px;"></div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// ==================== 优化4: 增强的日志加载函数 ====================
+
+// 重写 loadHistoryLogs 函数，增加更好的错误处理和状态管理
+const originalLoadHistoryLogs = window.loadHistoryLogs;
+
+window.loadHistoryLogs = async function(isManual = false) {
+    if (isManual) {
+        showToast('正在同步日志...', 'success');
+        showLoadingSkeleton('monitorLogStream');
+        showLoadingSkeleton('historyLogSidebar');
+    }
+    
+    try {
+        await originalLoadHistoryLogs(isManual);
+    } catch (error) {
+        console.error('[Enhanced Log Load] Error:', error);
+        showToast('日志加载失败，请检查网络连接', 'error');
+        
+        // 显示错误提示
+        const containers = ['monitorLogStream', 'historyLogSidebar'];
+        containers.forEach(id => {
+            const container = document.getElementById(id);
+            if (container) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: var(--text-dim);">
+                        <div style="font-size: 2rem; margin-bottom: 10px;">⚠️</div>
+                        <div>加载失败</div>
+                        <button onclick="loadHistoryLogs(true)" class="btn-action" style="margin-top: 15px;">
+                            重试
+                        </button>
+                    </div>
+                `;
+            }
+        });
+    }
+};
+
+// ==================== 优化5: 报告下载增强 ====================
+
+// 增强的报告下载按钮（历史页面）
+document.getElementById('btnDownloadHistoryReport')?.addEventListener('click', () => {
+    if (currentHistoryTaskId) {
+        downloadReport(currentHistoryTaskId);
+    } else {
+        showToast('请先选择一条分析记录', 'error');
+    }
+});
+
+// ==================== 优化6: 数据缓存机制 ====================
+
+const dataCache = {
+    tasks: null,
+    signals: {},
+    lastUpdate: null
+};
+
+// 缓存任务列表
+function cacheTaskList(tasks) {
+    dataCache.tasks = tasks;
+    dataCache.lastUpdate = Date.now();
+    localStorage.setItem('ecg_cache_tasks', JSON.stringify({
+        tasks: tasks,
+        timestamp: dataCache.lastUpdate
+    }));
+}
+
+// 获取缓存的任务列表
+function getCachedTaskList() {
+    try {
+        const cached = localStorage.getItem('ecg_cache_tasks');
+        if (cached) {
+            const data = JSON.parse(cached);
+            // 缓存有效期：5分钟
+            if (Date.now() - data.timestamp < 5 * 60 * 1000) {
+                return data.tasks;
+            }
+        }
+    } catch (e) {
+        console.error('Cache read error:', e);
+    }
+    return null;
+}
+
+// ==================== 优化7: 键盘快捷键 ====================
+
+document.addEventListener('keydown', (e) => {
+    // Ctrl/Cmd + R: 刷新日志
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+        e.preventDefault();
+        loadHistoryLogs(true);
+    }
+    
+    // Ctrl/Cmd + 1/2/3: 切换视图
+    if ((e.ctrlKey || e.metaKey) && ['1', '2', '3'].includes(e.key)) {
+        e.preventDefault();
+        const views = ['monitor', 'history', 'config'];
+        switchView(views[parseInt(e.key) - 1]);
+    }
+    
+    // 空格键: 播放/暂停（历史页面）
+    if (e.code === 'Space' && document.getElementById('historyView').classList.contains('active')) {
+        e.preventDefault();
+        document.getElementById('btnPlayPause')?.click();
+    }
+});
+
+// ==================== 优化8: 性能监控 ====================
+
+let performanceMetrics = {
+    renderTime: [],
+    apiCallTime: []
+};
+
+function trackPerformance(metric, value) {
+    if (!performanceMetrics[metric]) performanceMetrics[metric] = [];
+    performanceMetrics[metric].push(value);
+    
+    // 只保留最近100条记录
+    if (performanceMetrics[metric].length > 100) {
+        performanceMetrics[metric].shift();
+    }
+}
+
+// ==================== 优化9: 用户偏好设置 ====================
+
+const userPreferences = {
+    theme: 'dark',
+    autoRefresh: true,
+    notificationsEnabled: true,
+    
+    save() {
+        localStorage.setItem('ecg_preferences', JSON.stringify(this));
+    },
+    
+    load() {
+        try {
+            const saved = localStorage.getItem('ecg_preferences');
+            if (saved) {
+                Object.assign(this, JSON.parse(saved));
+            }
+        } catch (e) {
+            console.error('Preferences load error:', e);
+        }
+    }
+};
+
+// ==================== 优化10: 初始化增强功能 ====================
+
+function initEnhancements() {
+    console.log('[Enhancement] 初始化增强功能...');
+    
+    // 加载用户偏好
+    userPreferences.load();
+    
+    // 启动自动刷新
+    if (userPreferences.autoRefresh) {
+        startAutoRefresh();
+    }
+    
+    // 添加自动刷新切换按钮（如果不存在）
+    const historySection = document.querySelector('.history-section');
+    if (historySection && !document.getElementById('btnToggleAutoRefresh')) {
+        const refreshBtn = historySection.querySelector('button[onclick*="loadHistoryLogs"]');
+        if (refreshBtn) {
+            const toggleBtn = document.createElement('button');
+            toggleBtn.id = 'btnToggleAutoRefresh';
+            toggleBtn.className = 'btn-action';
+            toggleBtn.textContent = '🔄 自动刷新: 开';
+            toggleBtn.style.background = 'rgba(16, 185, 129, 0.2)';
+            toggleBtn.style.marginLeft = '10px';
+            toggleBtn.onclick = toggleAutoRefresh;
+            refreshBtn.parentNode.insertBefore(toggleBtn, refreshBtn.nextSibling);
+        }
+    }
+    
+    // 检测网络状态
+    if (!navigator.onLine) {
+        showToast('当前处于离线状态', 'error');
+    }
+    
+    console.log('[Enhancement] 增强功能初始化完成');
+}
+
+// 页面加载完成后初始化
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initEnhancements);
+} else {
+    initEnhancements();
+}
+
+// ==================== 优化11: 导出功能 ====================
+
+function exportAllData() {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+        showToast('请先登录', 'error');
+        return;
+    }
+    
+    showToast('正在导出数据...', 'success');
+    
+    fetch('/api/ecg/tasks', { 
+        headers: { 'Authorization': `Bearer ${token}` } 
+    })
+    .then(res => res.json())
+    .then(tasks => {
+        const dataStr = JSON.stringify(tasks, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ecg_data_export_${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        showToast('数据导出成功', 'success');
+    })
+    .catch(err => {
+        console.error('Export error:', err);
+        showToast('导出失败', 'error');
+    });
+}
+
+// ==================== 优化12: 统计信息 ====================
+
+function showStatistics() {
+    const token = localStorage.getItem('access_token');
+    if (!token) return;
+    
+    fetch('/api/ecg/tasks', { 
+        headers: { 'Authorization': `Bearer ${token}` } 
+    })
+    .then(res => res.json())
+    .then(tasks => {
+        const completed = tasks.filter(t => t.status === 'completed');
+        const failed = tasks.filter(t => t.status === 'failed');
+        const highRisk = completed.filter(t => t.result?.risk_level === '高风险');
+        
+        const stats = {
+            total: tasks.length,
+            completed: completed.length,
+            failed: failed.length,
+            highRisk: highRisk.length,
+            successRate: ((completed.length / tasks.length) * 100).toFixed(1)
+        };
+        
+        console.log('[Statistics]', stats);
+        
+        // 可以在配置页面显示这些统计信息
+        const configView = document.getElementById('configView');
+        if (configView) {
+            const statsCard = configView.querySelector('.glass-card');
+            if (statsCard) {
+                const statsHTML = `
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--glass-border);">
+                        <h4 style="font-size: 0.9rem; margin-bottom: 15px; color: var(--text-dim);">使用统计</h4>
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                            <div style="text-align: center; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">${stats.total}</div>
+                                <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 4px;">总分析次数</div>
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);">${stats.successRate}%</div>
+                                <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 4px;">成功率</div>
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--accent);">${stats.highRisk}</div>
+                                <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 4px;">高风险检出</div>
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                                <div style="font-size: 1.5rem; font-weight: 700; color: var(--warning);">${stats.failed}</div>
+                                <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 4px;">失败次数</div>
+                            </div>
+                        </div>
+                        <button onclick="exportAllData()" class="btn-action" style="width: 100%; margin-top: 15px;">
+                            📥 导出所有数据
+                        </button>
+                    </div>
+                `;
+                statsCard.insertAdjacentHTML('beforeend', statsHTML);
+            }
+        }
+    })
+    .catch(err => console.error('Stats error:', err));
+}
+
+// 切换到配置页面时显示统计
+const originalSwitchView = window.switchView;
+window.switchView = function(viewName) {
+    originalSwitchView(viewName);
+    if (viewName === 'config') {
+        setTimeout(showStatistics, 100);
+    }
+};
+
+console.log('[ECG Enhancement] 所有优化已加载 ✓');
+</script>
+
+<style>
+/* 脉冲动画（用于加载骨架屏） */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* 优化滚动条样式 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.3);
+    border-radius: 10px;
+    transition: background 0.3s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.5);
+}
+
+/* 增强按钮悬停效果 */
+.btn-action {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-action:active {
+    transform: scale(0.95);
+}
+
+/* 日志卡片选中效果增强 */
+.log-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--primary);
+    border-radius: 4px 0 0 4px;
+}
+</style>

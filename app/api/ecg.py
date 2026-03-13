@@ -17,13 +17,18 @@ ecg_service = ECGService()
 async def upload_ecg_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    algo_mode: str = "fusion"  # 新增：算法模式参数
 ):
     """
     上传 ECG 文件并创建分析任务（需要登录）
+    
+    Args:
+        file: ECG文件
+        algo_mode: 算法模式 (fusion/dual/ml_ensemble/dl_advanced/graph)
     """
     try:
-        task = await ecg_service.create_task(file, current_user.id, background_tasks)
+        task = await ecg_service.create_task(file, current_user.id, background_tasks, algo_mode)
         return task
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -60,3 +65,52 @@ async def list_tasks(
     """
     tasks = await ecg_service.list_tasks(skip, limit, current_user)
     return tasks
+@router.get("/tasks/{task_id}/report")
+async def download_report(
+    task_id: int,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    下载 PDF 诊断报告（需要登录）
+    """
+    from fastapi.responses import FileResponse
+    import os
+    
+    result = await ecg_service.get_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    # 检查权限
+    if result.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="无权访问此报告")
+    
+    if not result.report_path or not os.path.exists(result.report_path):
+        raise HTTPException(status_code=404, detail="报告尚未生成或文件丢失")
+    
+    return FileResponse(
+        path=result.report_path,
+        filename=f"ECG_Report_{task_id}.pdf",
+        media_type="application/pdf"
+    )
+
+@router.get("/tasks/{task_id}/signal")
+async def get_task_signal(
+    task_id: int,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    获取任务原始信号数据（用于历史回溯波形回放）
+    """
+    # 权限检查逻辑与获取结果一致
+    result = await ecg_service.get_result(task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    if result.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="无权访问此数据")
+    
+    signal_data = await ecg_service.get_signal(task_id)
+    if not signal_data:
+        raise HTTPException(status_code=404, detail="原始信号文件丢失")
+    
+    return signal_data

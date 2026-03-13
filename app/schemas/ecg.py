@@ -11,6 +11,7 @@ class ECGTaskResponse(BaseModel):
     id: int
     filename: str
     status: str
+    result: Optional[Dict[str, Any]] = None  # 添加result字段，用于前端过滤和显示
     created_at: datetime
     completed_at: Optional[datetime] = None
     

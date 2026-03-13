@@ -13,6 +13,7 @@ class ECGTask(Model):
     file_path = fields.CharField(max_length=512)
     status = fields.CharField(max_length=50, default="pending")  # pending, processing, completed, failed
     result = fields.JSONField(null=True)
+    report_path = fields.CharField(max_length=512, null=True)
     error_message = fields.TextField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     completed_at = fields.DatetimeField(null=True)
