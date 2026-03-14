@@ -498,6 +498,17 @@ def main():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
+    # SMOTE过采样（只对训练集，测试集保持真实分布）
+    print(f"\n应用SMOTE过采样...")
+    print(f"过采样前训练集类别分布: {np.bincount(y_train)}")
+    try:
+        from imblearn.over_sampling import SMOTE
+        smote = SMOTE(random_state=42, k_neighbors=5)
+        X_train_scaled, y_train = smote.fit_resample(X_train_scaled, y_train)
+        print(f"过采样后训练集类别分布: {np.bincount(y_train)}")
+    except ImportError:
+        print("⚠️  未安装imbalanced-learn，跳过SMOTE（可运行: pip install imbalanced-learn）")
+    
     # 训练模型
     models, results = train_and_evaluate_models(
         X_train_scaled, X_test_scaled, y_train, y_test, feature_names

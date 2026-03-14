@@ -407,6 +407,23 @@ def main():
     print(f"  类别1(室性早搏): {class_weights_np[1]:.2f}")
     print(f"  类别2(其他异常): {class_weights_np[2]:.2f}")
     
+    # SMOTE过采样（对训练集，测试集保持真实分布）
+    print(f"\n应用SMOTE过采样...")
+    print(f"过采样前训练集类别分布: {np.bincount(y_train)}")
+    try:
+        from imblearn.over_sampling import SMOTE
+        # DL数据需要reshape成2D才能用SMOTE
+        n_train = X_train.shape[0]
+        X_train_2d = X_train.reshape(n_train, -1)
+        smote = SMOTE(random_state=42, k_neighbors=5)
+        X_train_2d, y_train = smote.fit_resample(X_train_2d, y_train)
+        X_train = X_train_2d.reshape(-1, 1, X_train.shape[2])
+        print(f"过采样后训练集类别分布: {np.bincount(y_train)}")
+        # 重新计算类别权重（过采样后已平衡，权重可设为均等）
+        class_weights = torch.FloatTensor([1.0, 1.0, 1.0])
+    except ImportError:
+        print("⚠️  未安装imbalanced-learn，跳过SMOTE（可运行: pip install imbalanced-learn）")
+    
     # 定义模型
     num_classes = 3
     models = {
