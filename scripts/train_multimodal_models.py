@@ -90,7 +90,7 @@ def load_mitbih_data(data_dir='data', segment_length=1000, num_samples=5000):
             signal, fields = wfdb.rdsamp(record_path)
             annotation = wfdb.rdann(record_path, 'atr')
             
-            # 提取信号片段
+            # 提取信号片段（每个患者读完所有心拍，不提前截断）
             for i, (sample, symbol) in enumerate(zip(annotation.sample, annotation.symbol)):
                 if symbol not in label_map:
                     continue
@@ -111,15 +111,17 @@ def load_mitbih_data(data_dir='data', segment_length=1000, num_samples=5000):
                 y_list.append(label_map[symbol])
                 record_ids_list.append(record)  # 记录患者ID
                 
-                if len(X_list) >= num_samples:
-                    break
-            
-            if len(X_list) >= num_samples:
-                break
-                
         except Exception as e:
             print(f"读取记录 {record} 失败: {e}")
             continue
+    
+    # 读完所有患者后再限制总样本数（随机采样，保持分布）
+    if len(X_list) > num_samples:
+        np.random.seed(42)
+        indices = np.random.choice(len(X_list), num_samples, replace=False)
+        X_list = [X_list[i] for i in indices]
+        y_list = [y_list[i] for i in indices]
+        record_ids_list = [record_ids_list[i] for i in indices]
     
     if len(X_list) == 0:
         print("警告: 未能加载MIT-BIH数据，使用模拟数据")

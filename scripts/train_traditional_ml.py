@@ -182,15 +182,17 @@ def load_and_extract_features(data_dir='data', num_samples=5000):
                 labels_list.append(label_map[symbol])
                 record_ids_list.append(record)  # 记录患者ID
                 
-                if len(features_list) >= num_samples:
-                    break
-            
-            if len(features_list) >= num_samples:
-                break
-                
         except Exception as e:
             print(f"处理记录 {record} 失败: {e}")
             continue
+    
+    # 读完所有患者后再限制总样本数（随机采样，保持分布）
+    if len(features_list) > num_samples:
+        np.random.seed(42)
+        indices = np.random.choice(len(features_list), num_samples, replace=False)
+        features_list = [features_list[i] for i in indices]
+        labels_list = [labels_list[i] for i in indices]
+        record_ids_list = [record_ids_list[i] for i in indices]
     
     if len(features_list) == 0:
         print("警告: 未能加载数据，使用模拟特征")
