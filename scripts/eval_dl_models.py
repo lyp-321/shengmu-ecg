@@ -284,7 +284,7 @@ def main():
         print(f"\n加载 {name} ...")
         model = model_fn()
         try:
-            state = torch.load(pth_path, map_location=device)
+            state = torch.load(pth_path, map_location=device, weights_only=True)
             if isinstance(state, dict) and 'model_state_dict' in state:
                 state = state['model_state_dict']
             model.load_state_dict(state)

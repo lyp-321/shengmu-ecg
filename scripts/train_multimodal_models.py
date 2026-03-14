@@ -8,15 +8,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import json
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, classification_report, confusion_matrix
-from sklearn.utils.class_weight import compute_class_weight
+from datetime import datetime
 import wfdb
 from tqdm import tqdm
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from app.algorithms.deep_models import (
@@ -27,13 +30,24 @@ from app.algorithms.deep_models import (
 # 配置
 # ============================================================
 CONFIG = {
-    'num_samples':      60000,
-    'segment_length':   1000,
-    'num_epochs':       30,
-    'batch_size':       32,
-    'lr':               0.001,
-    'num_classes':      3,
-    # 设为 True 跳过已训练的模型
+    'num_samples':         60000,
+    'segment_length':      1000,
+    'num_epochs':          60,         # 给 Transformer/BiLSTM 足够收敛空间
+    'batch_size':          64,
+    'num_classes':         3,
+    'early_stop_patience': 12,         # 稍宽松，避免在平台期过早停止
+    # 正常:室早:其他异常 ≈ 84:15:1，采样后均衡，class_weight 只做轻微辅助
+    'class_weight':        [1.0, 1.5, 2.0],
+    # 各模型独立学习率
+    'lr': {
+        'ResNet1D':    0.001,
+        'SEResNet1D':  0.001,
+        'Inception':   0.001,
+        'TCN':         0.0005,
+        'BiLSTM':      0.0003,
+        'Transformer': 0.0003,
+    },
+    # 设为 True 跳过已训练的模型（已有 .pth 文件时用）
     'skip': {
         'ResNet1D':    False,
         'SEResNet1D':  False,
@@ -43,6 +57,10 @@ CONFIG = {
         'Inception':   False,
     }
 }
+
+CSV_PATH = 'experiments/results/hyperparam_search.csv'
+# DataLoader worker 数：GPU 训练时用多进程预加载，CPU 训练时用 0
+NUM_WORKERS = 4
 
 # 实际存在的 MIT-BIH 标准记录（27个患者）
 RECORDS = [
@@ -130,15 +148,21 @@ def load_mitbih_data(data_dir='data'):
 # ============================================================
 # 训练
 # ============================================================
-def train_model(model, train_loader, val_loader, device, model_name, class_weights):
+def train_model(model, train_loader, val_loader, device, model_name, class_weights, lr=0.001):
+    import time as _time
     model = model.to(device)
     criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
-    optimizer = optim.Adam(model.parameters(), lr=CONFIG['lr'])
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    # ReduceLROnPlateau：val macro-F1 连续 5 轮不涨就 lr×0.5，最低降到 1e-6
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-6
+    )
 
-    best_f1   = 0.0
-    best_acc  = 0.0
-    history   = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+    best_f1    = 0.0
+    no_improve = 0
+    patience   = CONFIG['early_stop_patience']
+    history    = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+    t_start    = _time.time()
 
     for epoch in range(CONFIG['num_epochs']):
         # ── 训练 ──
@@ -173,7 +197,7 @@ def train_model(model, train_loader, val_loader, device, model_name, class_weigh
         v_acc   = 100. * sum(p == t for p, t in zip(v_preds, v_true)) / len(v_true)
         v_f1    = f1_score(v_true, v_preds, average='macro', zero_division=0)
 
-        scheduler.step(v_loss)
+        scheduler.step(v_f1)   # 按 F1 调整 lr，而不是 loss
 
         history['train_loss'].append(t_loss)
         history['train_acc'].append(t_acc)
@@ -186,11 +210,19 @@ def train_model(model, train_loader, val_loader, device, model_name, class_weigh
                   f"val loss={v_loss:.4f} acc={v_acc:.1f}% macro-F1={v_f1:.4f}")
 
         if v_f1 > best_f1:
-            best_f1  = v_f1
-            best_acc = v_acc
+            best_f1    = v_f1
+            no_improve = 0
             torch.save(model.state_dict(), f'app/algorithms/models/{model_name}_best.pth')
+        else:
+            no_improve += 1
+            if no_improve >= patience:
+                print(f"  Early stopping at epoch {epoch+1}（{patience}轮无提升）")
+                break
 
-    print(f"  训练完成 → 最佳验证 Macro-F1={best_f1:.4f}  Acc={best_acc:.1f}%")
+    cur_lr     = optimizer.param_groups[0]['lr']
+    elapsed    = _time.time() - t_start
+    history['train_time'] = elapsed
+    print(f"  训练完成 → 最佳验证 Macro-F1={best_f1:.4f}  最终lr={cur_lr:.2e}  耗时={elapsed:.1f}s")
     return history
 
 
@@ -216,16 +248,54 @@ def evaluate_model(model, test_loader, device, name):
 
     print(f"\n{name}")
     print(classification_report(y_true, y_pred,
-                                 target_names=['正常', '室性早搏', '其他异常'],
+                                 target_names=['Normal', 'PVC', 'Other'],
                                  zero_division=0))
-    print("混淆矩阵:")
+    print("Confusion Matrix:")
     print(cm)
 
     return {
+        'accuracy':      float((y_true == y_pred).mean()),
         'macro_f1':      float(macro),
         'f1_per_class':  f1_per.tolist(),
         'confusion_matrix': cm.tolist(),
     }
+
+
+# ============================================================
+# 实验记录（与 ML 保持一致，追加到同一个 CSV）
+# ============================================================
+def save_results_to_csv(results: dict, csv_path: str = CSV_PATH):
+    """将 DL 评估结果追加到 hyperparam_search.csv"""
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cw_str = str(CONFIG['class_weight']).replace(' ', '')
+
+    rows = []
+    for name, r in results.items():
+        fp = r.get('f1_per_class', [0, 0, 0])
+        rows.append({
+            'timestamp':    ts,
+            'model':        f'DL_{name}',
+            'class_weight': cw_str,
+            'smote_ratio':  'N/A',
+            'n_estimators': 'N/A',
+            'accuracy':     round(r.get('accuracy', 0), 4),
+            'macro_f1':     round(r.get('macro_f1', 0), 4),
+            'f1_normal':    round(fp[0] if len(fp) > 0 else 0, 4),
+            'f1_pvc':       round(fp[1] if len(fp) > 1 else 0, 4),
+            'f1_other':     round(fp[2] if len(fp) > 2 else 0, 4),
+            'train_time':   round(r.get('train_time', 0), 2),
+            'note':         f'DL patient-wise lr={CONFIG["lr"].get(name, "?")} early_stop={CONFIG["early_stop_patience"]}',
+        })
+
+    new_df = pd.DataFrame(rows)
+    if os.path.exists(csv_path):
+        existing = pd.read_csv(csv_path)
+        combined = pd.concat([existing, new_df], ignore_index=True)
+    else:
+        combined = new_df
+    combined.to_csv(csv_path, index=False)
+    print(f"\n✅ DL 实验结果已追加到 {csv_path}（共 {len(combined)} 条记录）")
 
 
 # ============================================================
@@ -246,6 +316,7 @@ def plot_training_curves(histories):
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
     print(f"训练曲线已保存: {save_path}")
 
 
@@ -280,27 +351,32 @@ def main():
     print(f"  验证集: {X_val.shape},   类别分布: {np.bincount(y_val)}")
     print(f"  测试集: {X_test.shape},  类别分布: {np.bincount(y_test)}")
 
-    # 3. SMOTE（训练集）
-    print("\n应用 SMOTE 过采样...")
-    try:
-        from imblearn.over_sampling import SMOTE
-        n, c, l = X_train.shape
-        X_2d = X_train.reshape(n, -1)
-        X_2d, y_train = SMOTE(random_state=42, k_neighbors=5).fit_resample(X_2d, y_train)
-        X_train = X_2d.reshape(-1, c, l)
-        print(f"  过采样后: {np.bincount(y_train)}")
-        class_weights = torch.FloatTensor([1.0, 1.0, 1.0])
-    except ImportError:
-        print("  未安装 imbalanced-learn，跳过 SMOTE")
-        cw = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
-        class_weights = torch.FloatTensor(cw)
+    # 3. WeightedRandomSampler：让每个 epoch 里三类样本数量接近均衡
+    # 原理：对少数类样本赋予更高的采样概率，每个 epoch 重复采样少数类
+    # 比 SMOTE 快（不生成新样本），比纯 class_weight 稳定（梯度不震荡）
+    counts   = np.bincount(y_train)                          # [n0, n1, n2]
+    # 每个样本的采样权重 = 1 / 该类样本数（类越少权重越大）
+    sample_weights = np.array([1.0 / counts[yi] for yi in y_train], dtype=np.float32)
+    sampler  = WeightedRandomSampler(
+        weights     = torch.FloatTensor(sample_weights),
+        num_samples = len(y_train),   # 保持每 epoch 步数不变，只改采样分布
+        replacement = True
+    )
+    print(f"\n类别分布: {counts}  →  WeightedRandomSampler（每epoch {len(y_train)} 个样本，三类均衡）")
 
-    print(f"  类别权重: {class_weights.numpy().round(2)}")
+    # 采样已均衡分布，class_weight 只做轻微辅助，避免过度惩罚
+    class_weights = torch.FloatTensor(CONFIG['class_weight'])
+    print(f"CrossEntropyLoss 辅助权重: {class_weights.numpy()}")
 
-    # 4. DataLoader
-    train_loader = DataLoader(ECGDataset(X_train, y_train), batch_size=CONFIG['batch_size'], shuffle=True)
-    val_loader   = DataLoader(ECGDataset(X_val,   y_val),   batch_size=CONFIG['batch_size'])
-    test_loader  = DataLoader(ECGDataset(X_test,  y_test),  batch_size=CONFIG['batch_size'])
+    # 4. DataLoader（训练集用 sampler，不能同时用 shuffle=True）
+    nw = NUM_WORKERS if device.type == 'cuda' else 0
+    pm = device.type == 'cuda'
+    train_loader = DataLoader(ECGDataset(X_train, y_train), batch_size=CONFIG['batch_size'],
+                              sampler=sampler, num_workers=nw, pin_memory=pm)
+    val_loader   = DataLoader(ECGDataset(X_val,   y_val),   batch_size=CONFIG['batch_size'],
+                              num_workers=nw, pin_memory=pm)
+    test_loader  = DataLoader(ECGDataset(X_test,  y_test),  batch_size=CONFIG['batch_size'],
+                              num_workers=nw, pin_memory=pm)
 
     # 5. 定义模型
     nc = CONFIG['num_classes']
@@ -324,8 +400,25 @@ def main():
             print(f"\n⏭️  跳过 {name}（{status}）")
             continue
 
-        print(f"\n{'='*60}\n训练模型: {name}\n{'='*60}")
-        histories[name] = train_model(model, train_loader, val_loader, device, name.lower(), class_weights)
+        # Transformer 在长序列上显存消耗大，自动降 batch_size
+        if name == 'Transformer' and device.type == 'cuda':
+            # 重新创建独立的 sampler，避免与 train_loader 共享迭代器状态
+            t_sampler = WeightedRandomSampler(
+                weights     = torch.FloatTensor(sample_weights),
+                num_samples = len(y_train),
+                replacement = True
+            )
+            t_loader = DataLoader(ECGDataset(X_train, y_train), batch_size=32,
+                                  sampler=t_sampler, num_workers=nw, pin_memory=pm)
+            v_loader = DataLoader(ECGDataset(X_val,   y_val),   batch_size=32,
+                                  num_workers=nw, pin_memory=pm)
+            print(f"\n{'='*60}\n训练模型: {name}（batch_size=32 防 OOM）\n{'='*60}")
+        else:
+            t_loader, v_loader = train_loader, val_loader
+            print(f"\n{'='*60}\n训练模型: {name}\n{'='*60}")
+
+        model_lr = CONFIG['lr'].get(name, 0.001)
+        histories[name] = train_model(model, t_loader, v_loader, device, name.lower(), class_weights, lr=model_lr)
 
     # 7. 绘制训练曲线
     if histories:
@@ -340,24 +433,28 @@ def main():
         if not os.path.exists(model_path):
             print(f"\n{name}: 模型文件不存在，跳过")
             continue
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         model = model.to(device)
         results[name] = evaluate_model(model, test_loader, device, name)
+        results[name]['train_time'] = histories.get(name, {}).get('train_time', 0.0)
 
     # 9. 汇总打印
     if results:
-        print(f"\n{'='*60}\n模型性能汇总\n{'='*60}")
-        print(f"{'模型':<15} {'宏F1':>8} {'正常F1':>8} {'室早F1':>8} {'其他F1':>8}")
-        print("-" * 50)
+        print(f"\n{'='*60}\nModel Performance Summary\n{'='*60}")
+        print(f"{'Model':<15} {'Macro-F1':>9} {'Normal-F1':>10} {'PVC-F1':>8} {'Other-F1':>9}")
+        print("-" * 55)
         for name, r in results.items():
             fp = r['f1_per_class']
-            print(f"{name:<15} {r['macro_f1']:>8.4f} {fp[0]:>8.4f} "
-                  f"{fp[1] if len(fp)>1 else 0:>8.4f} {fp[2] if len(fp)>2 else 0:>8.4f}")
+            print(f"{name:<15} {r['macro_f1']:>9.4f} {fp[0]:>10.4f} "
+                  f"{fp[1] if len(fp)>1 else 0:>8.4f} {fp[2] if len(fp)>2 else 0:>9.4f}")
 
         os.makedirs('experiments/results', exist_ok=True)
         with open('experiments/results/dl_results_patient_wise.json', 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print("\n✅ 结果已保存: experiments/results/dl_results_patient_wise.json")
+
+        # 追加到 CSV（与 ML 实验记录统一）
+        save_results_to_csv(results)
 
     print("\n✅ 完成！模型保存在 app/algorithms/models/")
 

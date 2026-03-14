@@ -418,7 +418,7 @@ class MultiModalFusionEngine:
             if os.path.exists(model_path):
                 try:
                     # 加载模型权重
-                    state_dict = torch.load(model_path, map_location=self.device)
+                    state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
                     model.load_state_dict(state_dict)
                     model = model.to(self.device)
                     model.eval()
