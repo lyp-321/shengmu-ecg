@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
@@ -146,12 +147,42 @@ def load_mitbih_data(data_dir='data'):
 
 
 # ============================================================
+# Focal Loss（解决类别不平衡：自动降低简单样本权重，聚焦难分类样本）
+# ============================================================
+class FocalLoss(nn.Module):
+    """
+    Focal Loss = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    gamma=2：对已学好的正常类梯度衰减，把注意力集中到 PVC/Other
+    class_weights：配合 WeightedRandomSampler 做轻微辅助
+    """
+    def __init__(self, gamma=2.0, weight=None):
+        super().__init__()
+        self.gamma  = gamma
+        self.weight = weight  # 类别权重 tensor
+
+    def forward(self, logits, targets):
+        # logits: (B, C)  targets: (B,)
+        log_prob = F.log_softmax(logits, dim=1)          # (B, C)
+        prob     = torch.exp(log_prob)                   # (B, C)
+        # 取每个样本真实类别的概率
+        p_t      = prob.gather(1, targets.unsqueeze(1)).squeeze(1)   # (B,)
+        log_p_t  = log_prob.gather(1, targets.unsqueeze(1)).squeeze(1)
+        focal_w  = (1 - p_t) ** self.gamma               # (B,)
+        loss     = -focal_w * log_p_t                    # (B,)
+        # 应用类别权重
+        if self.weight is not None:
+            w = self.weight.to(logits.device)[targets]   # (B,)
+            loss = loss * w
+        return loss.mean()
+
+
+# ============================================================
 # 训练
 # ============================================================
 def train_model(model, train_loader, val_loader, device, model_name, class_weights, lr=0.001):
     import time as _time
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device), label_smoothing=0.1)
+    criterion = FocalLoss(gamma=2.0, weight=class_weights.to(device))
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     # ReduceLROnPlateau：val macro-F1 连续 5 轮不涨就 lr×0.5，最低降到 1e-6
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
