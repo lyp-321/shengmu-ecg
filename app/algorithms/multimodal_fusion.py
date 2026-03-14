@@ -307,6 +307,13 @@ class MultiModalFusionEngine:
         
         signal = features.get('signal', np.zeros(1000))
         
+        # 截取中间1000点（与训练时一致），过长信号取中间段
+        if len(signal) > 1000:
+            mid = len(signal) // 2
+            signal = signal[mid - 500: mid + 500]
+        elif len(signal) < 1000:
+            signal = np.pad(signal, (0, 1000 - len(signal)))
+        
         # 如果模型加载成功，使用真实模型预测
         if self._deep_models and len(signal) > 0:
             try:
@@ -397,18 +404,19 @@ class MultiModalFusionEngine:
     def _load_deep_models(self):
         """加载深度学习模型（PyTorch模型）"""
         import os
-        from app.algorithms.deep_models import ResNet1D, SEResNet1D, BiLSTMECG, TCN, InceptionECG
+        from app.algorithms.deep_models import ResNet1D, SEResNet1D, BiLSTMECG, TCN, InceptionECG, TransformerECG
         
         model_dir = "app/algorithms/models"
         num_classes = 3  # 训练时使用3类
         
         # 定义模型架构和文件
         model_configs = {
-            'ResNet1D': (ResNet1D(num_classes=num_classes), 'resnet1d_best.pth'),
-            'SEResNet1D': (SEResNet1D(num_classes=num_classes), 'seresnet1d_best.pth'),
-            'BiLSTM': (BiLSTMECG(num_classes=num_classes, hidden_size=128), 'bilstm_best.pth'),
-            'TCN': (TCN(num_classes=num_classes), 'tcn_best.pth'),
-            'Inception': (InceptionECG(num_classes=num_classes), 'inception_best.pth')
+            'ResNet1D':    (ResNet1D(num_classes=num_classes), 'resnet1d_best.pth'),
+            'SEResNet1D':  (SEResNet1D(num_classes=num_classes), 'seresnet1d_best.pth'),
+            'Transformer': (TransformerECG(num_classes=num_classes, d_model=128, nhead=8), 'transformer_best.pth'),
+            'BiLSTM':      (BiLSTMECG(num_classes=num_classes, hidden_size=128), 'bilstm_best.pth'),
+            'TCN':         (TCN(num_classes=num_classes), 'tcn_best.pth'),
+            'Inception':   (InceptionECG(num_classes=num_classes), 'inception_best.pth'),
         }
         
         self._deep_models = {}

@@ -38,8 +38,6 @@ class ECGInference:
         self.model_dir = "app/algorithms/models"
         
         # 懒加载：只在需要时加载模型
-        self._rf_model = None
-        self._svm_model = None
         self._scaler = None
         self._cnn_model = None
         self._device = None
@@ -65,20 +63,6 @@ class ECGInference:
             self._fusion_engine = MultiModalFusionEngine()
             logger.info("多模态融合引擎加载完成")
         return self._fusion_engine
-    
-    @property
-    def rf_model(self):
-        """延迟加载随机森林模型"""
-        if self._rf_model is None:
-            self._rf_model = self._load_pickle("rf_model.pkl")
-        return self._rf_model
-    
-    @property
-    def svm_model(self):
-        """延迟加载SVM模型"""
-        if self._svm_model is None:
-            self._svm_model = self._load_pickle("svm_model.pkl")
-        return self._svm_model
     
     @property
     def scaler(self):
@@ -211,28 +195,10 @@ class ECGInference:
             raise InferenceError(f"推理过程出错: {str(e)}")
     
     def _ml_inference(self, heart_rate: float, hrv: Dict) -> str:
-        """机器学习推理"""
-        ml_diagnosis = "正常窦性心律"
-        
-        if self.rf_model and self.scaler:
-            try:
-                X = np.array([[heart_rate, hrv.get('sdnn', 0), hrv.get('rmssd', 0)]])
-                
-                if self.scaler.n_features_in_ == 3:
-                    X_scaled = self.scaler.transform(X)
-                    ml_pred = self.rf_model.predict(X_scaled)[0]
-                    ml_diagnosis = str(ml_pred)
-                    logger.debug(f"ML推理结果: {ml_diagnosis}")
-                else:
-                    # 特征不匹配，使用规则引擎
-                    if hrv.get('sdnn', 0) < 30 or heart_rate > 110:
-                        ml_diagnosis = "心律不齐 (规则判定)"
-            except Exception as e:
-                logger.warning(f"ML推理失败，使用规则引擎: {e}")
-                if hrv.get('sdnn', 0) < 30:
-                    ml_diagnosis = "心律不齐"
-        
-        return ml_diagnosis
+        """机器学习推理（规则引擎回退）"""
+        if hrv.get('sdnn', 0) < 30 or heart_rate > 110:
+            return "心律不齐"
+        return "正常窦性心律"
     
     def _dl_inference(self, signal: np.ndarray) -> float:
         """深度学习推理"""

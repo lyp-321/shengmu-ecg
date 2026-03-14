@@ -343,7 +343,8 @@ def main():
     print(f"{'='*65}")
     print(f"最佳 DL 模型: {best_dl_name}  Macro-F1={best_dl['macro_f1']:.4f}")
     print(f"ML 最佳 PVC-F1: {best_ml_pvc:.4f}  DL 最佳 PVC-F1: {best_dl_pvc:.4f}")
-    print(f"DL 最佳 Other-F1: {best_dl_other:.4f}  (ML 最佳: {max(r[\"f1_per_class\"][2] for r in ML_RESULTS.values()):.4f})")
+    best_ml_other = max(r['f1_per_class'][2] for r in ML_RESULTS.values())
+    print(f"DL 最佳 Other-F1: {best_dl_other:.4f}  (ML 最佳: {best_ml_other:.4f})")
     if best_dl_other > 0.10:
         print("✅ DL Other-F1 > 0.10：深度卷积成功捕捉到 ML 41维特征无法描述的怪异波形")
     else:

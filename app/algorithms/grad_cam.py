@@ -122,21 +122,21 @@ def visualize_grad_cam(signal: np.ndarray, cam: np.ndarray,
     import matplotlib.pyplot as plt
     
     # 类别名称
-    class_names = ['正常', '室性早搏', '其他异常']
+    class_names = ['Normal Sinus Rhythm', 'PVC', 'Other Arrhythmia']
     
     # 创建图形
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 8))
     
     # 绘制原始信号
     ax1.plot(signal, 'b-', linewidth=1)
-    ax1.set_title(f'原始ECG信号 | 预测: {class_names[pred_class]} | 置信度: {confidence:.2%}', 
+    ax1.set_title(f'Raw ECG Signal | Prediction: {class_names[pred_class]} | Confidence: {confidence:.2%}', 
                   fontsize=14, fontweight='bold')
-    ax1.set_xlabel('采样点')
-    ax1.set_ylabel('振幅')
+    ax1.set_xlabel('Sample Points')
+    ax1.set_ylabel('Amplitude')
     ax1.grid(True, alpha=0.3)
     
     # 绘制信号+热力图叠加
-    ax2.plot(signal, 'b-', linewidth=1, alpha=0.7, label='ECG信号')
+    ax2.plot(signal, 'b-', linewidth=1, alpha=0.7, label='ECG Signal')
     
     # 使用热力图着色背景
     # 将CAM插值到信号长度
@@ -156,10 +156,10 @@ def visualize_grad_cam(signal: np.ndarray, cam: np.ndarray,
         if alpha > 0.1:  # 只显示重要区域
             ax2.axvspan(i, i+1, alpha=alpha, color='red')
     
-    ax2.set_title('Grad-CAM可解释性分析 | 红色区域 = 模型关注区域', 
+    ax2.set_title('Grad-CAM Explainability | Red regions = Model attention areas', 
                   fontsize=14, fontweight='bold')
-    ax2.set_xlabel('采样点')
-    ax2.set_ylabel('振幅')
+    ax2.set_xlabel('Sample Points')
+    ax2.set_ylabel('Amplitude')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
@@ -215,7 +215,7 @@ def explain_prediction(model: torch.nn.Module, signal: np.ndarray,
         regions.append((start, len(important_regions)))
     
     # 类别名称
-    class_names = ['正常窦性心律', '室性早搏', '其他异常']
+    class_names = ['Normal Sinus Rhythm', 'PVC', 'Other Arrhythmia']
     
     return {
         'prediction': class_names[pred_class],
@@ -253,8 +253,8 @@ if __name__ == '__main__':
     # 2. 准备信号
     signal = np.random.randn(1000)  # 替换为真实ECG信号
     
-    # 3. 选择目标层（ResNet的最后一个卷积层）
-    target_layer = model.layer4[-1].conv2
+    # 3. 选择目标层（ResNet的最后一个卷积层，现在是 layer3）
+    target_layer = model.layer3[-1].conv2
     
     # 4. 生成解释
     result = explain_prediction(model, signal, target_layer)

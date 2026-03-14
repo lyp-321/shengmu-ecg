@@ -15,7 +15,7 @@ from app.core.exceptions import register_exception_handlers
 app = FastAPI(
     title="ECG Analysis System",
     description="智能心电图分析系统 API - 基于多模态深度学习",
-    version="2.0.0",
+    version="2.2.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -51,7 +51,7 @@ async def startup_event():
     """应用启动事件"""
     logger.info("=" * 60)
     logger.info("ECG智能心电图分析系统启动中...")
-    logger.info("版本: 2.0.0")
+    logger.info("版本: 2.2.0")
     logger.info("=" * 60)
 
 
@@ -66,7 +66,7 @@ async def health_check():
     """健康检查接口"""
     return {
         "status": "ok",
-        "version": "2.0.0",
+        "version": "2.2.0",
         "service": "ECG Analysis System"
     }
 

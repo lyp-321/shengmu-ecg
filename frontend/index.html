@@ -653,7 +653,7 @@
         </nav>
         <div style="padding-top: 20px; border-top: 1px solid var(--glass-border);">
             <p style="font-size: 0.7rem; color: var(--text-dim); text-align: center; font-family: 'JetBrains Mono';">
-                SYSTEM v2.0.0 ENTERPRISE</p>
+                SYSTEM v2.2.0</p>
         </div>
     </aside>
 
@@ -861,7 +861,7 @@
                     <div class="glass-card" style="padding: 20px;">
                         <h3 style="font-size: 1rem; margin-bottom: 20px;">HRV 分布分析</h3>
                         <div style="height: 200px; position: relative;">
-                            <canvas id="rrHistogram"></canvas>
+                            <canvas id="rrHistogram" style="width: 100%; height: 100%;"></canvas>
                         </div>
                     </div>
                     <div class="glass-card" style="padding: 20px; flex-grow: 1;">
@@ -1598,7 +1598,6 @@
                 updateTimeDisplay();
             } catch (e) {
                 console.warn('无法获取真实信号', e);
-                showToast('信号数据加载失败', 'error');
             }
         }
 
@@ -1653,7 +1652,11 @@
 
         function calculateRRIntervals(signal, fs) {
             // 极简峰值检测算法
-            const threshold = Math.max(...signal) * 0.7;
+            let maxVal = -Infinity;
+            for (let i = 0; i < signal.length; i++) {
+                if (signal[i] > maxVal) maxVal = signal[i];
+            }
+            const threshold = maxVal * 0.7;
             const peaks = [];
             for (let i = 1; i < signal.length - 1; i++) {
                 if (signal[i] > threshold && signal[i] > signal[i - 1] && signal[i] > signal[i + 1]) {
@@ -1697,24 +1700,7 @@
             }
         }
 
-        // 上传逻辑
-        document.getElementById('fileInput').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const token = localStorage.getItem('access_token');
-            const formData = new FormData();
-            formData.append('file', file);
-            showToast('正在上传并分析...', 'success');
-            try {
-                const response = await fetch('/api/ecg/upload', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    body: formData
-                });
-                const task = await response.json();
-                pollResult(task.id);
-            } catch (e) { alert('上传失败'); }
-        });
+        // 上传逻辑（由底部 uploadFile 统一处理）
 
         async function pollResult(taskId) {
             // 防御性检查：确保taskId有效
@@ -1770,6 +1756,8 @@
                     if (historyRenderer1) historyRenderer1.resize();
                     if (historyRenderer2) historyRenderer2.resize();
                     loadHistoryLogs();
+                    // 如果已有选中任务，重新渲染 HRV 图表
+                    if (currentHistoryTaskId) fetchRealSignal(currentHistoryTaskId);
                 }
                 // 强制 Chart.js 重绘
                 if (hrTrendChart) hrTrendChart.resize();

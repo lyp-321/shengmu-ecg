@@ -29,7 +29,7 @@ def test_grad_cam_with_real_data():
         print("请先运行训练脚本: python scripts/train_multimodal_models.py")
         return
     
-    model.load_state_dict(torch.load(model_path, map_location='cpu'))
+    model.load_state_dict(torch.load(model_path, map_location='cpu', weights_only=True))
     model.eval()
     print("✓ 模型加载成功")
     
@@ -57,9 +57,9 @@ def test_grad_cam_with_real_data():
     print(f"✓ 数据加载成功，信号长度: {len(signal)}")
     print(f"  心拍类型: {annotation.symbol[10]}")
     
-    # 3. 选择目标层（ResNet的最后一个卷积层）
+    # 3. 选择目标层（ResNet的最后一个卷积层，现在是 layer3）
     print("\n3. 初始化Grad-CAM...")
-    target_layer = model.layer4[-1].conv2
+    target_layer = model.layer3[-1].conv2
     print(f"✓ 目标层: {target_layer}")
     
     # 4. 生成解释
@@ -110,7 +110,7 @@ def test_grad_cam_with_test_data():
         print(f"❌ 模型文件不存在: {model_path}")
         return
     
-    model.load_state_dict(torch.load(model_path, map_location='cpu'))
+    model.load_state_dict(torch.load(model_path, map_location='cpu', weights_only=True))
     model.eval()
     print("✓ 模型加载成功")
     
@@ -128,16 +128,16 @@ def test_grad_cam_with_test_data():
         
         print(f"\n处理: {description} ({file_path})")
         
-        # 读取CSV
+        # 读取CSV（无列名，直接是数值）
         import pandas as pd
-        df = pd.read_csv(file_path)
-        signal = df['ecg'].values[:1000]  # 取前1000个点
+        df = pd.read_csv(file_path, header=None)
+        signal = df.iloc[:1000, 0].values.astype(np.float32)
         
         # 归一化
         signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-8)
         
         # 生成解释
-        target_layer = model.layer4[-1].conv2
+        target_layer = model.layer3[-1].conv2
         result = explain_prediction(model, signal, target_layer, device='cpu')
         
         print(f"  预测: {result['prediction']} (置信度: {result['confidence']:.2%})")

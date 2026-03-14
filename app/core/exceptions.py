@@ -57,12 +57,17 @@ async def ecg_exception_handler(request: Request, exc: ECGException):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """请求验证异常处理器"""
     logger.warning(f"请求验证失败: {exc.errors()}")
+    # 过滤掉不可序列化的 bytes 类型 body
+    errors = exc.errors()
+    for e in errors:
+        if isinstance(e.get('input'), bytes):
+            e['input'] = e['input'].decode('utf-8', errors='replace')
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "error": "VALIDATION_ERROR",
             "message": "请求参数验证失败",
-            "details": exc.errors()
+            "details": errors
         }
     )
 

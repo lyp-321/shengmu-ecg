@@ -16,7 +16,6 @@ class ECGTaskResponse(BaseModel):
     completed_at: Optional[datetime] = None
     
     class Config:
-        orm_mode = True
         from_attributes = True
 
 
@@ -27,6 +26,7 @@ class ECGResultResponse(BaseModel):
     status: str
     result: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+    user_id: Optional[int] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
     
