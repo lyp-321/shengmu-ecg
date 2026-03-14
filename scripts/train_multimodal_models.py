@@ -151,7 +151,7 @@ def load_mitbih_data(data_dir='data'):
 def train_model(model, train_loader, val_loader, device, model_name, class_weights, lr=0.001):
     import time as _time
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
+    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device), label_smoothing=0.1)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     # ReduceLROnPlateau：val macro-F1 连续 5 轮不涨就 lr×0.5，最低降到 1e-6
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
