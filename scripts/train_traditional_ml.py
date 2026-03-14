@@ -148,7 +148,7 @@ def load_and_extract_features(data_dir='data', num_samples=5000):
     labels_list = []
     record_ids_list = []  # 新增：记录每个样本属于哪个患者
     
-    for record in tqdm(records[:30], desc="提取特征"):  # 使用30个患者（从10增加到30）:
+    for record in tqdm(records, desc="提取特征"):  # 使用全部患者
         try:
             record_path = os.path.join(data_dir, record)
             
@@ -257,11 +257,11 @@ def train_and_evaluate_models(X_train, X_test, y_train, y_test, feature_names):
     print("="*60)
     
     models = {
-        'RandomForest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+        'RandomForest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight='balanced'),
         'XGBoost': xgb.XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric='mlogloss'),
-        'LightGBM': lgb.LGBMClassifier(n_estimators=100, random_state=42, n_jobs=-1, verbose=-1),
-        'CatBoost': CatBoostClassifier(iterations=100, random_state=42, verbose=False),
-        'SVM': SVC(kernel='rbf', probability=True, random_state=42)
+        'LightGBM': lgb.LGBMClassifier(n_estimators=100, random_state=42, n_jobs=-1, verbose=-1, class_weight='balanced'),
+        'CatBoost': CatBoostClassifier(iterations=100, random_state=42, verbose=False, auto_class_weights='Balanced'),
+        'SVM': SVC(kernel='rbf', probability=True, random_state=42, class_weight='balanced')
     }
     
     results = {}
@@ -271,9 +271,14 @@ def train_and_evaluate_models(X_train, X_test, y_train, y_test, feature_names):
         print(f"训练模型: {name}")
         print(f"{'='*60}")
         
-        # 训练
+        # 训练（XGBoost需要手动传sample_weight）
         start_time = time.time()
-        model.fit(X_train, y_train)
+        if name == 'XGBoost':
+            from sklearn.utils.class_weight import compute_sample_weight
+            sample_weights = compute_sample_weight('balanced', y_train)
+            model.fit(X_train, y_train, sample_weight=sample_weights)
+        else:
+            model.fit(X_train, y_train)
         train_time = time.time() - start_time
         
         # 预测
@@ -443,8 +448,7 @@ def main():
     np.random.seed(42)
     
     # 加载数据并提取特征（返回record_ids用于按患者划分）
-    # 增加样本数量以加载更多患者数据（从5000增加到30000）
-    X, y, record_ids, feature_names = load_and_extract_features(num_samples=30000)
+    X, y, record_ids, feature_names = load_and_extract_features(num_samples=60000)
     
     # ========== 按患者划分数据集（Patient-wise Split）==========
     print("\n" + "="*60)

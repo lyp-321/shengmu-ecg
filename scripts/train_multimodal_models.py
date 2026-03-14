@@ -77,7 +77,7 @@ def load_mitbih_data(data_dir='data', segment_length=1000, num_samples=5000):
     y_list = []
     record_ids_list = []  # 新增：记录每个样本属于哪个患者
     
-    for record in tqdm(records[:30], desc="读取记录"):  # 使用30个患者（从10增加到30）
+    for record in tqdm(records, desc="读取记录"):  # 使用全部患者
         try:
             # 读取信号和注释
             record_path = os.path.join(data_dir, record)
@@ -144,7 +144,7 @@ def load_mitbih_data(data_dir='data', segment_length=1000, num_samples=5000):
 
 
 def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001, 
-                device='cpu', model_name='model'):
+                device='cpu', model_name='model', class_weights=None):
     """
     训练模型
     
@@ -156,16 +156,23 @@ def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001,
         lr: 学习率
         device: 设备
         model_name: 模型名称
+        class_weights: 类别权重张量（用于处理类别不平衡）
     
     Returns:
         训练历史
     """
+    from sklearn.metrics import f1_score as sk_f1
     print(f"\n{'='*60}")
     print(f"训练模型: {model_name}")
     print(f"{'='*60}")
     
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss()
+    # 使用类别权重处理不平衡问题
+    if class_weights is not None:
+        criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
+        print(f"使用类别权重: {class_weights.numpy().round(2)}")
+    else:
+        criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
                                                       factor=0.5, patience=5)
@@ -178,6 +185,7 @@ def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001,
     }
     
     best_val_acc = 0.0
+    best_val_f1 = 0.0  # 用宏平均F1作为保存标准
     
     for epoch in range(num_epochs):
         # 训练阶段
@@ -208,6 +216,8 @@ def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001,
         val_loss = 0.0
         val_correct = 0
         val_total = 0
+        val_preds = []
+        val_true = []
         
         with torch.no_grad():
             for inputs, labels in val_loader:
@@ -220,9 +230,12 @@ def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001,
                 _, predicted = outputs.max(1)
                 val_total += labels.size(0)
                 val_correct += predicted.eq(labels).sum().item()
+                val_preds.extend(predicted.cpu().numpy())
+                val_true.extend(labels.cpu().numpy())
         
         val_loss /= len(val_loader)
         val_acc = 100. * val_correct / val_total
+        val_macro_f1 = sk_f1(val_true, val_preds, average='macro', zero_division=0)
         
         # 更新学习率
         scheduler.step(val_loss)
@@ -234,18 +247,19 @@ def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001,
         history['val_acc'].append(val_acc)
         
         # 打印进度
-        if (epoch + 1) % 5 == 0 or epoch == 0:  # 第一个epoch也打印
+        if (epoch + 1) % 5 == 0 or epoch == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}] "
                   f"Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | "
-                  f"Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}%")
+                  f"Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}% MacroF1: {val_macro_f1:.4f}")
         
-        # 保存最佳模型
-        if val_acc > best_val_acc:
+        # 用宏平均F1保存最佳模型（对少数类更公平）
+        if val_macro_f1 > best_val_f1:
+            best_val_f1 = val_macro_f1
             best_val_acc = val_acc
             torch.save(model.state_dict(), 
                       f'app/algorithms/models/{model_name}_best.pth')
     
-    print(f"训练完成! 最佳验证准确率: {best_val_acc:.2f}%")
+    print(f"训练完成! 最佳验证 MacroF1: {best_val_f1:.4f} (对应Acc: {best_val_acc:.2f}%)")
     
     return history
 
@@ -318,7 +332,7 @@ def main():
     
     # 加载数据（返回record_ids用于按患者划分）
     # 增加样本数量以加载更多患者数据（从5000增加到30000）
-    X, y, record_ids = load_mitbih_data(num_samples=30000)
+    X, y, record_ids = load_mitbih_data(num_samples=60000)
     
     # ========== 按患者划分数据集（Patient-wise Split）==========
     print("\n" + "="*60)
@@ -378,6 +392,19 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
     
+    # 计算类别权重（处理类别不平衡）
+    from sklearn.utils.class_weight import compute_class_weight
+    class_weights_np = compute_class_weight(
+        class_weight='balanced',
+        classes=np.unique(y_train),
+        y=y_train
+    )
+    class_weights = torch.FloatTensor(class_weights_np)
+    print(f"\n类别权重（balanced）: {class_weights_np.round(2)}")
+    print(f"  类别0(正常): {class_weights_np[0]:.2f}")
+    print(f"  类别1(室性早搏): {class_weights_np[1]:.2f}")
+    print(f"  类别2(其他异常): {class_weights_np[2]:.2f}")
+    
     # 定义模型
     num_classes = 3
     models = {
@@ -406,10 +433,11 @@ def main():
         
         history = train_model(
             model, train_loader, val_loader,
-            num_epochs=30,  # 可以根据需要调整
+            num_epochs=30,
             lr=0.001,
             device=device,
-            model_name=name.lower()
+            model_name=name.lower(),
+            class_weights=class_weights
         )
         histories[name] = history
     
