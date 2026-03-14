@@ -110,47 +110,71 @@ class MultiModalFusionEngine:
         if self._time_domain_models and len(time_features) > 0:
             logger.info(f"使用 {len(self._time_domain_models)} 个模型进行预测...")
             try:
-                # 集成多个模型的预测
-                predictions = []
-                confidences = []
-                
-                for model_name, model in self._time_domain_models.items():
+                # 标准化（与训练时一致）
+                feat_input = time_features.reshape(1, -1)
+                if self._scaler is not None:
                     try:
-                        # 预测
-                        if hasattr(model, 'predict_proba'):
-                            probs = model.predict_proba([time_features])[0]
-                            pred = np.argmax(probs)
-                            conf = probs[pred]
-                        else:
-                            pred = model.predict([time_features])[0]
-                            conf = 0.8  # 默认置信度
-                            probs = np.zeros(12)
-                            probs[pred] = conf
-                            probs[probs == 0] = (1 - conf) / 11
-                        
-                        predictions.append(pred)
-                        confidences.append(conf)
-                        
-                        logger.info(f"{model_name} 预测: 类别={pred}, 置信度={conf:.4f}")
+                        feat_input = self._scaler.transform(feat_input)
                     except Exception as e:
-                        logger.warning(f"{model_name} 预测失败: {e}")
-                        continue
-                
-                # 投票决定最终预测
+                        logger.warning(f"scaler 标准化失败: {e}")
+
+                # ── Stacking：XGBoost 粗筛 + CatBoost 复核 ──
+                # XGBoost 召回率高，负责不漏掉任何疑似异常
+                # CatBoost 精确率高，负责剔除假阳性，减少误报骚扰
+                xgb_model = self._time_domain_models.get('XGBoost')
+                cat_model = self._time_domain_models.get('CatBoost')
+                lgb_model = self._time_domain_models.get('LightGBM')
+
+                pred_class, prob = 0, 0.5
+                stacking_used = False
+
+                if xgb_model is not None and cat_model is not None:
+                    try:
+                        xgb_probs = xgb_model.predict_proba(feat_input)[0]
+                        xgb_pred  = int(np.argmax(xgb_probs))
+
+                        if xgb_pred != 0:
+                            # XGBoost 认为异常 → 交给 CatBoost 复核
+                            cat_probs = cat_model.predict_proba(feat_input)[0]
+                            cat_pred  = int(np.argmax(cat_probs))
+                            pred_class = cat_pred
+                            prob       = float(cat_probs[cat_pred])
+                            logger.info(f"Stacking: XGB粗筛=异常({xgb_pred}), CatBoost复核={cat_pred}, conf={prob:.4f}")
+                        else:
+                            # XGBoost 认为正常 → 直接采信
+                            pred_class = 0
+                            prob       = float(xgb_probs[0])
+                            logger.info(f"Stacking: XGB粗筛=正常, conf={prob:.4f}")
+
+                        stacking_used = True
+                    except Exception as e:
+                        logger.warning(f"Stacking 预测失败，回退到 LightGBM: {e}")
+
+                if not stacking_used:
+                    # 回退：用 LightGBM 或任意可用模型
+                    fallback = lgb_model or next(iter(self._time_domain_models.values()), None)
+                    if fallback is not None:
+                        try:
+                            fb_probs   = fallback.predict_proba(feat_input)[0]
+                            pred_class = int(np.argmax(fb_probs))
+                            prob       = float(fb_probs[pred_class])
+                        except Exception as e:
+                            logger.warning(f"回退模型预测失败: {e}")
+
+                predictions = [pred_class]
+                confidences = [prob]
+
                 if predictions:
-                    from collections import Counter
-                    pred_class = Counter(predictions).most_common(1)[0][0]
-                    prob = np.mean(confidences)
+                    logger.info(f"ML集成结果: 类别={pred_class}, 置信度={prob:.4f}")
                     
-                    logger.info(f"集成结果: 类别={pred_class}, 平均置信度={prob:.4f}")
-                    
-                    # 构造概率分布
-                    probs = np.zeros(12)
-                    probs[pred_class] = prob
-                    probs[probs == 0] = (1 - prob) / 11
+                    # 3类概率分布映射到12类
+                    probs12 = np.zeros(12)
+                    class_map = {0: 0, 1: 5, 2: 3}  # 正常→0, 室早→5, 其他→3
+                    probs12[class_map.get(pred_class, 0)] = prob
+                    probs12[probs12 == 0] = (1 - prob) / 11
                     
                     return {
-                        'probabilities': probs,
+                        'probabilities': probs12,
                         'prediction': pred_class,
                         'confidence': prob,
                         'features': time_features
@@ -193,49 +217,40 @@ class MultiModalFusionEngine:
         }
     
     def _load_time_domain_models(self):
-        """加载时域模型（传统ML模型）"""
+        """加载时域模型（传统ML模型）和 scaler"""
         import os
-        
-        # 优先使用joblib，因为训练脚本使用joblib保存
-        try:
-            import joblib
-            use_joblib = True
-        except ImportError:
-            import pickle
-            use_joblib = False
-            logger.warning("joblib未安装，使用pickle加载（可能不兼容）")
-        
+        import joblib
+
         model_dir = "app/algorithms/models"
         model_files = {
-            'RandomForest': 'randomforest_model.pkl',
-            'XGBoost': 'xgboost_model.pkl',
+            'XGBoost':  'xgboost_model.pkl',
             'LightGBM': 'lightgbm_model.pkl',
             'CatBoost': 'catboost_model.pkl',
-            'SVM': 'svm_model.pkl'
         }
-        
+
+        # 加载 scaler
+        scaler_path = os.path.join(model_dir, 'scaler.pkl')
+        self._scaler = None
+        if os.path.exists(scaler_path):
+            try:
+                self._scaler = joblib.load(scaler_path)
+                logger.info("加载 scaler 成功")
+            except Exception as e:
+                logger.warning(f"加载 scaler 失败: {e}")
+
         self._time_domain_models = {}
-        
         for model_name, filename in model_files.items():
             model_path = os.path.join(model_dir, filename)
             if os.path.exists(model_path):
                 try:
-                    if use_joblib:
-                        # 使用joblib加载（推荐）
-                        model = joblib.load(model_path)
-                    else:
-                        # 回退到pickle
-                        import pickle
-                        with open(model_path, 'rb') as f:
-                            model = pickle.load(f)
-                    
+                    model = joblib.load(model_path)
                     self._time_domain_models[model_name] = model
                     logger.info(f"加载模型成功: {model_name}")
                 except Exception as e:
                     logger.warning(f"加载模型失败 {model_name}: {e}")
             else:
                 logger.warning(f"模型文件不存在: {model_path}")
-        
+
         if not self._time_domain_models:
             logger.warning("未加载任何时域模型，将使用规则推理")
         else:
@@ -505,14 +520,14 @@ class MultiModalFusionEngine:
         
         # 临时方案：时域模型和深度学习模型都已训练，调整权重
         weights = {
-            'time': 0.45,  # 时域模型（传统ML）
+            'time': 0.45,  # 时域模型（传统ML Stacking）
             'freq': 0.05,  # 频域（模拟）
             'deep': 0.45,  # 深度学习模型（已训练）
             'graph': 0.02,  # 图网络（模拟）
             'rule': 0.03   # 规则引擎
         }
         logger.debug(f"使用时域+深度学习双主导权重: {weights}")
-        
+
         # 加权融合概率
         fused_probs = (
             weights['time'] * time_result['probabilities'] +
@@ -521,13 +536,39 @@ class MultiModalFusionEngine:
             weights['graph'] * graph_result['probabilities'] +
             weights['rule'] * rule_result['probabilities']
         )
-        
+
         # 归一化
         fused_probs = fused_probs / np.sum(fused_probs)
-        
+
         # 最终预测
         pred_class = int(np.argmax(fused_probs))
         confidence = float(fused_probs[pred_class])
+
+        # ── 双端互证（ML vs DL 一致性检验）──
+        # ML 判正常但 DL 坚定认为异常 → 触发强制预警，不能因为 ML 多数票而漏诊
+        ml_pred  = time_result.get('prediction', 0)
+        dl_pred  = deep_result.get('prediction', 0)
+        dl_conf  = deep_result.get('confidence', 0.0)
+        cross_alert = False
+
+        if ml_pred == 0 and dl_pred != 0 and dl_conf >= 0.70:
+            # ML 说正常，DL 高置信度说异常 → 以 DL 为准，强制上调风险
+            cross_alert = True
+            pred_class  = dl_pred
+            confidence  = dl_conf * 0.9   # 略微折扣，体现不确定性
+            logger.warning(
+                f"双端互证触发：ML=正常, DL=异常({dl_pred}, conf={dl_conf:.2f}) "
+                f"→ 强制采信DL结果，触发3级预警"
+            )
+        elif ml_pred != 0 and dl_pred == 0 and dl_conf >= 0.80:
+            # ML 说异常，DL 高置信度说正常 → DL 起到"假阳性过滤"作用
+            cross_alert = False
+            pred_class  = 0
+            confidence  = (float(time_result.get('confidence', 0.5)) + dl_conf) / 2
+            logger.info(
+                f"双端互证：ML=异常({ml_pred}), DL=正常(conf={dl_conf:.2f}) "
+                f"→ DL过滤假阳性，采信正常"
+            )
         
         # 诊断标签映射
         diagnosis_map = {
@@ -544,9 +585,14 @@ class MultiModalFusionEngine:
             10: "三度房室传导阻滞",
             11: "束支传导阻滞"
         }
-        
+
         diagnosis = diagnosis_map.get(pred_class, "未知")
-        
+
+        # 风险等级：双端互证触发时强制3级及以上
+        risk_level = self._assess_risk(pred_class, confidence, features)
+        if cross_alert and risk_level == "低风险":
+            risk_level = "中风险"   # 至少中风险，不允许漏诊
+
         # 确保所有numpy类型转换为Python原生类型
         return {
             'diagnosis': diagnosis,
@@ -558,7 +604,8 @@ class MultiModalFusionEngine:
             'heart_rate': float(features.get('heart_rate', 0)),
             'hrv_sdnn': float(features.get('hrv', {}).get('sdnn', 0)),
             'hrv_rmssd': float(features.get('hrv', {}).get('rmssd', 0)),
-            'risk_level': self._assess_risk(pred_class, confidence, features),
+            'risk_level': risk_level,
+            'cross_alert': cross_alert,   # 双端互证是否触发
             'afib_prob': float(fused_probs[1]) if len(fused_probs) > 1 else 0.0
         }
     
@@ -693,52 +740,95 @@ class MultiModalFusionEngine:
         return result
     
     def _extract_time_features(self, features: Dict[str, Any]) -> np.ndarray:
-        """提取时域特征（27维 - 与训练脚本保持一致）"""
-        heart_rate = features.get('heart_rate', 75)
-        hrv = features.get('hrv', {})
-        
-        # 构造27维特征向量（与train_traditional_ml.py保持一致）
-        time_features = np.array([
-            heart_rate,                      # 1. 平均心率
-            hrv.get('sdnn', 50),            # 2. SDNN
-            hrv.get('rmssd', 30),           # 3. RMSSD
-            hrv.get('pnn50', 0.1),          # 4. pNN50
-            hrv.get('mean_rr', 800),        # 5. 平均RR间期
-            hrv.get('std_rr', 50),          # 6. RR间期标准差
-            hrv.get('min_rr', 600),         # 7. 最小RR间期
-            hrv.get('max_rr', 1000),        # 8. 最大RR间期
-            hrv.get('median_rr', 800),      # 9. RR间期中位数
-            hrv.get('range_rr', 400),       # 10. RR间期范围
-            hrv.get('cv_rr', 0.05),         # 11. RR间期变异系数
-            hrv.get('sd1', 30),             # 12. Poincaré SD1
-            hrv.get('sd2', 60),             # 13. Poincaré SD2
-            hrv.get('sd_ratio', 2.0),       # 14. SD1/SD2比值
-            hrv.get('sampen', 1.5),         # 15. 样本熵
-            hrv.get('lf_power', 500),       # 16. 低频功率
-            hrv.get('hf_power', 300),       # 17. 高频功率
-            hrv.get('lf_hf_ratio', 1.5),    # 18. LF/HF比值
-            hrv.get('vlf_power', 200),      # 19. 极低频功率
-            hrv.get('total_power', 1000),   # 20. 总功率
-            features.get('qrs_duration', 80),    # 21. QRS波宽度
-            features.get('pr_interval', 160),    # 22. PR间期
-            features.get('qt_interval', 400),    # 23. QT间期
-            features.get('qtc_interval', 420),   # 24. 校正QT间期
-            features.get('p_wave_amp', 0.1),     # 25. P波振幅
-            features.get('r_wave_amp', 1.0),     # 26. R波振幅
-            features.get('t_wave_amp', 0.3),     # 27. T波振幅
-        ], dtype=np.float32)
-        
-        return time_features
-    
+        """
+        提取与训练脚本完全一致的特征（41维）
+        时域16维 + 频域7维 + 小波18维 = 41维
+        与 scripts/train_traditional_ml.py 保持一致
+        """
+        import pywt
+        from scipy.signal import find_peaks
+
+        signal = np.array(features.get('signal', np.zeros(1000)), dtype=np.float64)
+        fs = features.get('sampling_rate', 360)
+
+        feat = {}
+
+        # ── 时域特征（16维）──
+        feat['mean'] = np.mean(signal)
+        feat['std'] = np.std(signal)
+        feat['max'] = np.max(signal)
+        feat['min'] = np.min(signal)
+        feat['median'] = np.median(signal)
+        feat['range'] = feat['max'] - feat['min']
+        import pandas as pd
+        feat['skewness'] = float(pd.Series(signal).skew())
+        feat['kurtosis'] = float(pd.Series(signal).kurtosis())
+
+        peaks, _ = find_peaks(signal, distance=int(0.6 * fs), prominence=0.3)
+        if len(peaks) > 1:
+            rr = np.diff(peaks) / fs * 1000
+            feat['hr_mean'] = 60000 / np.mean(rr) if len(rr) > 0 else 0
+            feat['hr_std'] = np.std(60000 / rr) if len(rr) > 0 else 0
+            feat['sdnn'] = np.std(rr)
+            feat['rmssd'] = np.sqrt(np.mean(np.diff(rr) ** 2)) if len(rr) > 1 else 0
+            feat['pnn50'] = np.sum(np.abs(np.diff(rr)) > 50) / len(rr) * 100 if len(rr) > 1 else 0
+            feat['rr_irregularity'] = np.std(rr) / (np.mean(rr) + 1e-8)
+        else:
+            feat['hr_mean'] = 0; feat['hr_std'] = 0; feat['sdnn'] = 0
+            feat['rmssd'] = 0; feat['pnn50'] = 0; feat['rr_irregularity'] = 0
+
+        feat['r_amplitude'] = feat['max'] - feat['min']
+        feat['r_peak_count'] = float(len(peaks))
+
+        # ── 频域特征（7维）──
+        fft_vals = np.fft.fft(signal)
+        fft_freq = np.fft.fftfreq(len(signal), 1 / fs)
+        power = np.abs(fft_vals) ** 2
+
+        p_t_band  = (fft_freq >= 0.5) & (fft_freq < 5)
+        qrs_band  = (fft_freq >= 5)   & (fft_freq < 20)
+        hf_band   = (fft_freq >= 20)  & (fft_freq < 40)
+        total_pow = np.sum(power[(fft_freq >= 0.5) & (fft_freq < 40)]) + 1e-8
+
+        feat['pt_power']        = np.sum(power[p_t_band])
+        feat['qrs_power']       = np.sum(power[qrs_band])
+        feat['hf_power']        = np.sum(power[hf_band])
+        feat['qrs_pt_ratio']    = feat['qrs_power'] / (feat['pt_power'] + 1e-8)
+        feat['qrs_power_ratio'] = feat['qrs_power'] / total_pow
+
+        pos_mask = fft_freq > 0
+        if pos_mask.sum() > 0:
+            dom_idx = np.argmax(power[pos_mask])
+            feat['dominant_freq']  = fft_freq[pos_mask][dom_idx]
+            feat['dominant_power'] = power[pos_mask][dom_idx]
+        else:
+            feat['dominant_freq'] = 0; feat['dominant_power'] = 0
+
+        # ── 小波特征（6层×3 = 18维）──
+        coeffs = pywt.wavedec(signal, 'db4', level=5)
+        for i, coeff in enumerate(coeffs):
+            feat[f'wavelet_energy_level_{i}'] = np.sum(coeff ** 2)
+            feat[f'wavelet_std_level_{i}']    = np.std(coeff)
+            feat[f'wavelet_max_level_{i}']    = np.max(np.abs(coeff))
+
+        # 按固定顺序转为数组（与训练时DataFrame列顺序一致）
+        ordered_keys = [
+            'mean', 'std', 'max', 'min', 'median', 'range', 'skewness', 'kurtosis',
+            'hr_mean', 'hr_std', 'sdnn', 'rmssd', 'pnn50', 'rr_irregularity',
+            'r_amplitude', 'r_peak_count',
+            'pt_power', 'qrs_power', 'hf_power', 'qrs_pt_ratio', 'qrs_power_ratio',
+            'dominant_freq', 'dominant_power',
+        ]
+        for i in range(6):
+            ordered_keys += [f'wavelet_energy_level_{i}', f'wavelet_std_level_{i}', f'wavelet_max_level_{i}']
+
+        arr = np.array([feat.get(k, 0.0) for k in ordered_keys], dtype=np.float32)
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        return arr
+
     def _extract_freq_features(self, features: Dict[str, Any]) -> np.ndarray:
-        """提取频域特征（28维）"""
-        # 占位符，实际应进行小波变换等
-        signal = features.get('signal', np.zeros(1000))
-        
-        # 简单的FFT特征
+        """频域特征（复用 _extract_time_features 中的频域部分，保持接口兼容）"""
+        signal = np.array(features.get('signal', np.zeros(1000)))
         fft = np.fft.fft(signal)
-        power = np.abs(fft[:100]) ** 2
-        
-        freq_features = power[:28]  # 取前28维
-        
-        return freq_features
+        power = np.abs(fft[:28]) ** 2
+        return power.astype(np.float32)
