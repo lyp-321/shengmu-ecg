@@ -44,10 +44,10 @@ class ResNet1D(nn.Module):
         self.layer1  = self._make_layer(64,  64,  2, stride=1)
         self.layer2  = self._make_layer(64,  128, 2, stride=2)
         self.layer3  = self._make_layer(128, 256, 2, stride=2)
-        self.layer4  = self._make_layer(256, 512, 2, stride=2)
+        # 减少一层，最大通道数从 512 → 256，降低过拟合风险
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.dropout = nn.Dropout(0.5)
-        self.fc      = nn.Linear(512, num_classes)
+        self.dropout = nn.Dropout(0.6)  # 增大 dropout
+        self.fc      = nn.Linear(256, num_classes)
 
     def _make_layer(self, in_ch, out_ch, n, stride):
         layers = [self.ResidualBlock(in_ch, out_ch, stride)]
@@ -61,7 +61,6 @@ class ResNet1D(nn.Module):
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = self.layer4(out)
         out = self.avgpool(out).view(out.size(0), -1)
         return self.fc(self.dropout(out))
 
@@ -126,10 +125,10 @@ class SEResNet1D(nn.Module):
         self.layer1  = self._make_layer(64,  64,  2, stride=1)
         self.layer2  = self._make_layer(64,  128, 2, stride=2)
         self.layer3  = self._make_layer(128, 256, 2, stride=2)
-        self.layer4  = self._make_layer(256, 512, 2, stride=2)
+        # 减少一层，降低容量
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.dropout = nn.Dropout(0.5)
-        self.fc      = nn.Linear(512, num_classes)
+        self.dropout = nn.Dropout(0.6)
+        self.fc      = nn.Linear(256, num_classes)
 
     def _make_layer(self, in_ch, out_ch, n, stride):
         layers = [self.SEResidualBlock(in_ch, out_ch, stride)]
@@ -143,7 +142,6 @@ class SEResNet1D(nn.Module):
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = self.layer4(out)
         out = self.avgpool(out).view(out.size(0), -1)
         return self.fc(self.dropout(out))
 

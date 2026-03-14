@@ -31,7 +31,7 @@ from app.algorithms.deep_models import (
 # 配置
 # ============================================================
 CONFIG = {
-    'num_samples':         60000,
+    'num_samples':         None,       # None = 使用全量数据，不随机截断
     'segment_length':      1000,
     'num_epochs':          60,         # 给 Transformer/BiLSTM 足够收敛空间
     'batch_size':          64,
@@ -39,14 +39,16 @@ CONFIG = {
     'early_stop_patience': 12,         # 稍宽松，避免在平台期过早停止
     # 正常:室早:其他异常 ≈ 84:15:1，采样后均衡，class_weight 只做轻微辅助
     'class_weight':        [1.0, 1.5, 2.0],
-    # 各模型独立学习率
+    'label_smoothing':     0.1,        # 防止过拟合，软化标签
+    'mixup_alpha':         0.2,        # MixUp 增强强度
+    # 各模型独立学习率（降低初始 lr，配合数据增强）
     'lr': {
-        'ResNet1D':    0.001,
-        'SEResNet1D':  0.001,
-        'Inception':   0.001,
-        'TCN':         0.0005,
-        'BiLSTM':      0.0003,
-        'Transformer': 0.0003,
+        'ResNet1D':    0.0005,
+        'SEResNet1D':  0.0005,
+        'Inception':   0.0005,
+        'TCN':         0.0003,
+        'BiLSTM':      0.0002,
+        'Transformer': 0.0002,
     },
     # 设为 True 跳过已训练的模型（已有 .pth 文件时用）
     'skip': {
@@ -83,15 +85,33 @@ LABEL_MAP = {
 # 数据集
 # ============================================================
 class ECGDataset(Dataset):
-    def __init__(self, signals, labels):
+    def __init__(self, signals, labels, augment=False):
         self.signals = torch.FloatTensor(signals)
         self.labels  = torch.LongTensor(labels)
+        self.augment = augment
 
     def __len__(self):
         return len(self.signals)
 
     def __getitem__(self, idx):
-        return self.signals[idx], self.labels[idx]
+        x = self.signals[idx].clone()
+        if self.augment:
+            # 1. 加高斯噪声（SNR ~20dB）
+            if torch.rand(1) < 0.5:
+                x += torch.randn_like(x) * 0.05
+            # 2. 幅度缩放 [0.8, 1.2]
+            if torch.rand(1) < 0.5:
+                x *= (0.8 + torch.rand(1) * 0.4)
+            # 3. 时间偏移（循环移位，最多 ±50 个采样点）
+            if torch.rand(1) < 0.5:
+                shift = torch.randint(-50, 51, (1,)).item()
+                x = torch.roll(x, shift, dims=-1)
+            # 4. 基线漂移（低频正弦）
+            if torch.rand(1) < 0.3:
+                t = torch.linspace(0, 2 * 3.14159, x.shape[-1])
+                freq = torch.rand(1) * 0.5  # 0~0.5 Hz
+                x += torch.sin(2 * 3.14159 * freq * t).unsqueeze(0) * 0.1
+        return x, self.labels[idx]
 
 
 # ============================================================
@@ -131,7 +151,7 @@ def load_mitbih_data(data_dir='data'):
 
     # 随机采样
     n = CONFIG['num_samples']
-    if len(X_list) > n:
+    if n is not None and len(X_list) > n:
         np.random.seed(42)
         idx = np.random.choice(len(X_list), n, replace=False)
         X_list   = [X_list[i]   for i in idx]
@@ -151,29 +171,63 @@ def load_mitbih_data(data_dir='data'):
 # ============================================================
 class FocalLoss(nn.Module):
     """
-    Focal Loss = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    Focal Loss + Label Smoothing
     gamma=2：对已学好的正常类梯度衰减，把注意力集中到 PVC/Other
-    class_weights：配合 WeightedRandomSampler 做轻微辅助
+    label_smoothing：软化标签，防止过拟合
     """
-    def __init__(self, gamma=2.0, weight=None):
+    def __init__(self, gamma=2.0, weight=None, label_smoothing=0.0, num_classes=3):
         super().__init__()
         self.gamma  = gamma
-        self.weight = weight  # 类别权重 tensor
+        self.weight = weight
+        self.smoothing = label_smoothing
+        self.num_classes = num_classes
 
     def forward(self, logits, targets):
         # logits: (B, C)  targets: (B,)
-        log_prob = F.log_softmax(logits, dim=1)          # (B, C)
-        prob     = torch.exp(log_prob)                   # (B, C)
-        # 取每个样本真实类别的概率
-        p_t      = prob.gather(1, targets.unsqueeze(1)).squeeze(1)   # (B,)
-        log_p_t  = log_prob.gather(1, targets.unsqueeze(1)).squeeze(1)
-        focal_w  = (1 - p_t) ** self.gamma               # (B,)
-        loss     = -focal_w * log_p_t                    # (B,)
-        # 应用类别权重
+        log_prob = F.log_softmax(logits, dim=1)
+        prob     = torch.exp(log_prob)
+        
+        # Label smoothing: 真实标签 = (1-ε) * one_hot + ε/C
+        if self.smoothing > 0:
+            with torch.no_grad():
+                smooth_targets = torch.zeros_like(log_prob)
+                smooth_targets.fill_(self.smoothing / self.num_classes)
+                smooth_targets.scatter_(1, targets.unsqueeze(1), 1.0 - self.smoothing + self.smoothing / self.num_classes)
+            # 用软标签计算 loss
+            p_t = (prob * smooth_targets).sum(dim=1)
+            log_p_t = (log_prob * smooth_targets).sum(dim=1)
+        else:
+            p_t = prob.gather(1, targets.unsqueeze(1)).squeeze(1)
+            log_p_t = log_prob.gather(1, targets.unsqueeze(1)).squeeze(1)
+        
+        focal_w = (1 - p_t) ** self.gamma
+        loss = -focal_w * log_p_t
+        
         if self.weight is not None:
-            w = self.weight.to(logits.device)[targets]   # (B,)
+            w = self.weight.to(logits.device)[targets]
             loss = loss * w
         return loss.mean()
+
+
+# ============================================================
+# MixUp 数据增强（batch 层面）
+# ============================================================
+def mixup_data(x, y, alpha=0.2):
+    """MixUp: 混合两个样本，软化决策边界"""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size).to(x.device)
+    mixed_x = lam * x + (1 - lam) * x[index]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    """MixUp loss: 加权两个标签的 loss"""
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 
 # ============================================================
@@ -182,7 +236,12 @@ class FocalLoss(nn.Module):
 def train_model(model, train_loader, val_loader, device, model_name, class_weights, lr=0.001):
     import time as _time
     model = model.to(device)
-    criterion = FocalLoss(gamma=2.0, weight=class_weights.to(device))
+    criterion = FocalLoss(
+        gamma=2.0, 
+        weight=class_weights.to(device),
+        label_smoothing=CONFIG['label_smoothing'],
+        num_classes=CONFIG['num_classes']
+    )
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     # ReduceLROnPlateau：val macro-F1 连续 5 轮不涨就 lr×0.5，最低降到 1e-6
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -201,9 +260,18 @@ def train_model(model, train_loader, val_loader, device, model_name, class_weigh
         t_loss, t_correct, t_total = 0.0, 0, 0
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            out  = model(inputs)
-            loss = criterion(out, labels)
+            
+            # MixUp 数据增强（50% 概率）
+            if np.random.rand() < 0.5:
+                inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, alpha=0.2)
+                optimizer.zero_grad()
+                out = model(inputs)
+                loss = mixup_criterion(criterion, out, labels_a, labels_b, lam)
+            else:
+                optimizer.zero_grad()
+                out = model(inputs)
+                loss = criterion(out, labels)
+            
             loss.backward()
             optimizer.step()
             t_loss    += loss.item()
@@ -399,14 +467,14 @@ def main():
     class_weights = torch.FloatTensor(CONFIG['class_weight'])
     print(f"CrossEntropyLoss 辅助权重: {class_weights.numpy()}")
 
-    # 4. DataLoader（训练集用 sampler，不能同时用 shuffle=True）
+    # 4. DataLoader（训练集用 sampler + augment，不能同时用 shuffle=True）
     nw = NUM_WORKERS if device.type == 'cuda' else 0
     pm = device.type == 'cuda'
-    train_loader = DataLoader(ECGDataset(X_train, y_train), batch_size=CONFIG['batch_size'],
+    train_loader = DataLoader(ECGDataset(X_train, y_train, augment=True), batch_size=CONFIG['batch_size'],
                               sampler=sampler, num_workers=nw, pin_memory=pm)
-    val_loader   = DataLoader(ECGDataset(X_val,   y_val),   batch_size=CONFIG['batch_size'],
+    val_loader   = DataLoader(ECGDataset(X_val,   y_val,   augment=False), batch_size=CONFIG['batch_size'],
                               num_workers=nw, pin_memory=pm)
-    test_loader  = DataLoader(ECGDataset(X_test,  y_test),  batch_size=CONFIG['batch_size'],
+    test_loader  = DataLoader(ECGDataset(X_test,  y_test,  augment=False), batch_size=CONFIG['batch_size'],
                               num_workers=nw, pin_memory=pm)
 
     # 5. 定义模型
@@ -439,9 +507,9 @@ def main():
                 num_samples = len(y_train),
                 replacement = True
             )
-            t_loader = DataLoader(ECGDataset(X_train, y_train), batch_size=32,
+            t_loader = DataLoader(ECGDataset(X_train, y_train, augment=True), batch_size=32,
                                   sampler=t_sampler, num_workers=nw, pin_memory=pm)
-            v_loader = DataLoader(ECGDataset(X_val,   y_val),   batch_size=32,
+            v_loader = DataLoader(ECGDataset(X_val,   y_val,   augment=False), batch_size=32,
                                   num_workers=nw, pin_memory=pm)
             print(f"\n{'='*60}\n训练模型: {name}（batch_size=32 防 OOM）\n{'='*60}")
         else:
